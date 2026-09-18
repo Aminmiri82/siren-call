@@ -9,7 +9,7 @@ export class LuaSelectionLanguage implements SelectionLanguage {
     return new Promise((resolve, reject) => {
       // An empty environment prevents the worker inheriting the bot token.
       const worker = new Worker(new URL('./worker.js', import.meta.url), {
-        workerData: { source, context }, env: {},
+        workerData: { source, context }, env: {}, execArgv: [],
         resourceLimits: { maxOldGenerationSizeMb: 64, stackSizeMb: 4 },
       });
       let settled = false;

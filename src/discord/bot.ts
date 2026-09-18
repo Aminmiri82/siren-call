@@ -47,7 +47,7 @@ async function snapshot(interaction: Interaction): Promise<{ context: CompileCon
     callerId: caller.id,
     members: [...members.values()]
       .filter(member => !member.user.bot && channel.permissionsFor(member).has(PermissionFlagsBits.ViewChannel))
-      .map(member => ({ id: member.id, name: member.displayName, roleIds: [...member.roles.cache.keys()], joinedAt: member.joinedAt?.toISOString() ?? null })),
+      .map(member => ({ id: member.id, name: member.displayName, username: member.user.username, globalName: member.user.globalName, roleIds: [...member.roles.cache.keys()], joinedAt: member.joinedAt?.toISOString() ?? null })),
     roles: [...guild.roles.cache.values()].map(role => ({ id: role.id, name: role.name })),
   };
   let sendProblem: string | undefined;

@@ -7,6 +7,8 @@ export interface SelectionLanguage {
 export interface Member {
   id: string;
   name: string;
+  username?: string;
+  globalName?: string | null;
   roleIds: string[];
   joinedAt: string | null;
 }

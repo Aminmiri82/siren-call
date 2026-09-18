@@ -41,7 +41,8 @@ Scripts return `{ recipients = <list of ID strings>, message = <string> }`. IDs 
 | --- | --- |
 | `everyone()` | Human members who can view this channel |
 | `role("L1")` | Eligible members with this role; use the role ID if names collide |
-| `member("123...")` | One eligible member |
+| `member("@raphe22")`, `member("raphe22")` | One eligible member by username, server display name, or global display name |
+| `member("<@123...>")`, `member("123...")` | One eligible member by Discord mention or ID |
 | `member(caller_id)` | Yourself |
 | `joined_after("2026-09-18")` | Joined strictly after midnight UTC on this date |
 | `select(function(m) return ... end)` | Select by a Lua predicate |
@@ -50,7 +51,16 @@ Scripts return `{ recipients = <list of ID strings>, message = <string> }`. IDs 
 | `a * b`, `intersection(a,b)` | Intersection |
 | `members` | Array of eligible member snapshots |
 
-Member fields: `id`, `name` (server display name), `roleIds`, `joinedAt` (ISO UTC string, or `nil` if unknown). Unknown join dates do not match `joined_after`. Role names are exact and case-sensitive. The `@everyone` role can also be selected by the guild ID.
+Member fields: `id`, `name` (server display name), `username`, `globalName` (or `nil`), `roleIds`, `joinedAt` (ISO UTC string, or `nil` if unknown). Unknown join dates do not match `joined_after`. Role names are exact and case-sensitive. The `@everyone` role can also be selected by the guild ID.
+
+Member names match exactly (case-sensitive), including spaces and accents. Prefixing a name with `@` is optional. If multiple eligible members match any of these names, the bot asks for a mention or ID rather than guessing. A real Discord mention (`<@ID>` or `<@!ID>`) always resolves by ID. All references must be quoted Lua strings: bare `@raphe22` is not Lua syntax. The modal is a plain text editor, so typing `@name` there performs name lookup rather than opening Discord's mention picker.
+
+```lua
+return {
+  recipients = everyone() - member("@raphe22"),
+  message = "Class is cancelled"
+}
+```
 
 Use parentheses when mixing operators: Lua gives `*` higher precedence than `+` and `-`. Ordinary Lua variables, loops, functions, and the `math`, `string`, `table`, and `utf8` libraries are available.
 

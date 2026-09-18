@@ -9,13 +9,13 @@ const context: CompileContext = {
   members: [
     { id: '101', name: 'Yara', roleIds: [], joinedAt: '2026-09-01T00:00:00.000Z' },
     { id: '102', name: 'Both roles', roleIds: ['10', '20'], joinedAt: '2026-09-01T00:00:00.000Z' },
-    { id: '103', name: 'L2 only', roleIds: ['20'], joinedAt: '2026-09-01T00:00:00.000Z' },
-    { id: '104', name: 'New member', roleIds: [], joinedAt: '2026-09-19T00:00:00.000Z' },
+    { id: '103', name: 'L2 only', username: 'raphe22', globalName: 'Raphaël', roleIds: ['20'], joinedAt: '2026-09-01T00:00:00.000Z' },
+    { id: '104', name: 'Both roles', roleIds: [], joinedAt: '2026-09-19T00:00:00.000Z' },
   ],
 };
 
 // Each future adapter supplies its spelling of these scenarios. Assertions stay shared.
-function selectionContract(language: SelectionLanguage, scripts: { exclude: string; overlap: string; empty: string; invalid: string }) {
+function selectionContract(language: SelectionLanguage, scripts: { exclude: string; overlap: string; empty: string; invalid: string; named: string[]; ambiguous: string }) {
   describe(`${language.id}: audience contract`, () => {
     it('excludes overlapping roles and recent arrivals', async () => {
       const plan = validatePlan(await language.compile(scripts.exclude, context), context);
@@ -24,6 +24,15 @@ function selectionContract(language: SelectionLanguage, scripts: { exclude: stri
     it('mentions each person once when groups overlap', async () => {
       const plan = validatePlan(await language.compile(scripts.overlap, context), context);
       expect([...plan.recipients].sort()).toEqual(['102', '103']);
+    });
+    it('resolves names, usernames and mentions to the same excluded person', async () => {
+      for (const source of scripts.named) {
+        const plan = validatePlan(await language.compile(source, context), context);
+        expect(plan.recipients).toEqual(['101', '102', '104']);
+      }
+    });
+    it('rejects ambiguous names instead of selecting an arbitrary person', async () => {
+      await expect(language.compile(scripts.ambiguous, context)).rejects.toThrow('Ambiguous member name');
     });
     it('treats an empty result as a no-op and rejects unknown recipients', async () => {
       const empty = validatePlan(await language.compile(scripts.empty, context), context);
@@ -40,6 +49,10 @@ selectionContract(lua, {
   overlap: 'return { recipients = role("L1") + role("L2"), message = "Hello" }',
   empty: 'return { recipients = everyone() - everyone(), message = "Hello" }',
   invalid: 'return { recipients = {"999"}, message = "Hello" }',
+  named: ['103', '<@103>', '<@!103>', 'raphe22', '@raphe22', 'L2 only', 'Raphaël'].map(reference =>
+    `return { recipients = everyone() - member("${reference}"), message = "Hello" }`),
+  ambiguous: 'return { recipients = member("Both roles"), message = "Hello" }',
+
 });
 
 it('allows Lua loops and functions but terminates runaway scripts and stays usable', async () => {
