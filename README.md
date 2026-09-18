@@ -53,7 +53,7 @@ Scripts return `{ recipients = <list of ID strings>, message = <string> }`. IDs 
 
 Member fields: `id`, `name` (server display name), `username`, `globalName` (or `nil`), `roleIds`, `joinedAt` (ISO UTC string, or `nil` if unknown). Unknown join dates do not match `joined_after`. Role names are exact and case-sensitive. The `@everyone` role can also be selected by the guild ID.
 
-Member names match exactly (case-sensitive), including spaces and accents. Prefixing a name with `@` is optional. If multiple eligible members match any of these names, the bot asks for a mention or ID rather than guessing. A real Discord mention (`<@ID>` or `<@!ID>`) always resolves by ID. All references must be quoted Lua strings: bare `@raphe22` is not Lua syntax. The modal is a plain text editor, so typing `@name` there performs name lookup rather than opening Discord's mention picker.
+Member names match across server nicknames, usernames, and global display names. Case and accents are ignored (`chèvre`, `chévre`, and `CHEVRE` match); spaces and the rest of the name must still match. Prefixing a name with `@` is optional. If multiple eligible members match any of these names, the bot asks for a mention or ID rather than guessing. A real Discord mention (`<@ID>` or `<@!ID>`) always resolves by ID. All references must be quoted Lua strings: bare `@raphe22` is not Lua syntax. The modal is a plain text editor, so typing `@name` there performs name lookup rather than opening Discord's mention picker.
 
 ```lua
 return {
@@ -98,6 +98,7 @@ Discord command → SelectionLanguage.compile(source, context)
 ```
 
 - `src/selection.ts`: plain types, output validation, permission policy, batching, and delivery outcomes.
+- `src/members.ts`: language-independent member-name and mention resolution.
 - `src/languages/lua/`: Wasmoon Lua adapter and isolated execution worker.
 - `src/discord/`: Discord data conversion, interaction UI, and configuration.
 - `src/preview.ts`: run the same language contract without Discord.
@@ -115,7 +116,7 @@ Register its implementation in the language map and expose a command/editor choi
 
 ## Execution bounds
 
-Lua runs in a fresh worker with an empty environment and no JavaScript proxies/callbacks. User code receives an explicit Lua environment: no `io`, `os`, `package`, `require`, `debug`, `load`, or filesystem/network APIs. Loading source uses Lua's text-only mode.
+Lua runs in a fresh worker with an empty environment and no JavaScript object proxies. One narrow host callback resolves a member name to an ID using the shared resolver in `src/members.ts`; it has no Discord client, filesystem, or network access. User code receives an explicit Lua environment: no `io`, `os`, `package`, `require`, `debug`, `load`, or filesystem/network APIs. Loading source uses Lua's text-only mode.
 
 - Source: 16,000 UTF-8 bytes (Discord's editor/option is additionally capped at 4,000 characters).
 - Lua execution: 2 seconds, enforced by terminating the worker; runtime startup: 10 seconds.

@@ -41,23 +41,12 @@ local function role(name)
     return false
   end)
 end
+local resolve_member = resolve_member
 local function member(reference)
-  assert(type(reference) == 'string', 'Use member("@name"), member("name"), or member("<@ID>")')
-  local id = reference:match('^<@!?(%d+)>$') or reference:match('^%d+$')
-  if id then
-    for _, m in ipairs(context.members) do if m.id == id then return set({id}) end end
-    error('Unknown or ineligible member: '..reference)
-  end
-  local name = reference:gsub('^@', '', 1)
-  local matches = {}
-  for _, m in ipairs(context.members) do
-    if m.name == name or m.username == name or m.globalName == name then
-      matches[#matches + 1] = m.id
-    end
-  end
-  assert(#matches > 0, 'Unknown or ineligible member: '..reference)
-  assert(#matches == 1, 'Ambiguous member name: '..reference..'. Use a Discord mention (<@ID>) or user ID.')
-  return set(matches)
+  assert(type(reference) == 'string', 'Use member("name") or member("@username").')
+  local id, problem = resolve_member(reference)
+  if not id then error(problem, 2) end
+  return set({id})
 end
 local function joined_after(date)
   assert(type(date) == 'string', 'Use a UTC date: YYYY-MM-DD')

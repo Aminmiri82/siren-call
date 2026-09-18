@@ -81,13 +81,16 @@ async function preview(interaction: ChatInputCommandInteraction | ModalSubmitInt
     previews.set(id, { owner: interaction.user.id, channel: interaction.channelId!, plan, expires: Date.now() + limits.previewMs });
     const names = plan.recipients.slice(0, 12).map(id => state.context.members.find(member => member.id === id)!.name).join(', ');
     const description = [
-      `**${quantity(plan.recipients.length, "recipient")} · ${quantity(batches(plan).length, "message")}**`,
-      problem ? `**Cannot send:** ${problem}` : '**Ready to send.** Your permissions and the bot’s permissions allow this selection.',
-      `Recipients: ${names || '(none)'}${plan.recipients.length > 12 ? ', …' : ''}`,
-      'Notification delivery depends on each member’s Discord settings and cannot be checked.',
-      'This preview expires in 5 minutes. A new preview replaces your previous one.',
+      `**Ping ${quantity(plan.recipients.length, "person", "people")}?**`,
+      names + (plan.recipients.length > 12 ? `, +${plan.recipients.length - 12} more` : ''),
+      ...(problem ? [`\n**Can’t send:** ${problem}`] : []),
     ].join('\n');
-    await interaction.editReply({ content: description.slice(0, 1900), embeds: [{ title: 'Message preview', description: plan.message }], components: controls(id, Boolean(problem)), allowedMentions: { parse: [] } });
+    const count = batches(plan).length;
+    await interaction.editReply({
+      content: description.slice(0, 1900),
+      embeds: [{ description: plan.message, footer: { text: `${count > 1 ? `${count} messages · ` : ''}Expires in 5 minutes` } }],
+      components: controls(id, Boolean(problem)), allowedMentions: { parse: [] },
+    });
   } finally { busy.delete(interaction.user.id); }
 }
 
@@ -138,7 +141,7 @@ client.on(Events.InteractionCreate, async interaction => {
     } else if (interaction.isModalSubmit() && interaction.customId === 'ping:lua') await preview(interaction, interaction.fields.getTextInputValue('script'));
     else if (interaction.isButton()) await handleButton(interaction);
   } catch (error) {
-    const content = `Could not complete the request: ${error instanceof Error ? error.message.slice(0, 1700) : 'Unknown error'}`;
+    const content = `**Couldn’t prepare this ping.**\n${error instanceof Error ? error.message.slice(0, 1700) : 'Please try again.'}`;
     try {
       if (interaction.deferred || interaction.replied) await interaction.editReply({ content, embeds: [], components: [], allowedMentions: { parse: [] } });
       else await interaction.reply({ content, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });

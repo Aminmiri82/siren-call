@@ -9,8 +9,8 @@ const context: CompileContext = {
   members: [
     { id: '101', name: 'Yara', roleIds: [], joinedAt: '2026-09-01T00:00:00.000Z' },
     { id: '102', name: 'Both roles', roleIds: ['10', '20'], joinedAt: '2026-09-01T00:00:00.000Z' },
-    { id: '103', name: 'L2 only', username: 'raphe22', globalName: 'Raphaël', roleIds: ['20'], joinedAt: '2026-09-01T00:00:00.000Z' },
-    { id: '104', name: 'Both roles', roleIds: [], joinedAt: '2026-09-19T00:00:00.000Z' },
+    { id: '103', name: 'chèvre', username: 'raphe22', globalName: 'Raphaël', roleIds: ['20'], joinedAt: '2026-09-01T00:00:00.000Z' },
+    { id: '104', name: 'Bóth roles', roleIds: [], joinedAt: '2026-09-19T00:00:00.000Z' },
   ],
 };
 
@@ -49,7 +49,7 @@ selectionContract(lua, {
   overlap: 'return { recipients = role("L1") + role("L2"), message = "Hello" }',
   empty: 'return { recipients = everyone() - everyone(), message = "Hello" }',
   invalid: 'return { recipients = {"999"}, message = "Hello" }',
-  named: ['103', '<@103>', '<@!103>', 'raphe22', '@raphe22', 'L2 only', 'Raphaël'].map(reference =>
+  named: ['103', '<@103>', '<@!103>', 'raphe22', '@raphe22', 'chèvre', 'chévre', 'chevre', 'CHEVRE', 'che\u0300vre', 'Raphaël'].map(reference =>
     `return { recipients = everyone() - member("${reference}"), message = "Hello" }`),
   ambiguous: 'return { recipients = member("Both roles"), message = "Hello" }',
 
@@ -64,7 +64,8 @@ it('allows Lua loops and functions but terminates runaway scripts and stays usab
 
 it('does not expose host access, and rejects malformed or memory-exhausting scripts', async () => {
   await expect(lua.compile('return {recipients={}, message=tostring(os.getenv("DISCORD_TOKEN"))}', context)).rejects.toThrow();
-  await expect(lua.compile('return {', context)).rejects.toThrow();
+  await expect(lua.compile('return {', context)).rejects.toThrow(/^Line 1:/);
+  await expect(lua.compile('return { recipients = @raphe22 }', context)).rejects.toThrow('Put names in quotes');
   await expect(lua.compile('return {recipients={}, message=string.rep("x", 32 * 1024 * 1024)}', context)).rejects.toThrow();
 });
 
