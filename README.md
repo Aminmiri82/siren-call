@@ -13,14 +13,14 @@ return {
 
 ## Run locally
 
-Requires Node.js 24.17+ and a Discord bot application.
+Requires Node.js 24.17+, pnpm 10.33.0 (pinned in `package.json`), and a Discord bot application. If pnpm is not available, run `corepack enable` first.
 
 ```sh
-npm ci
+pnpm install --frozen-lockfile
 cp .env.example .env
 # Add your bot token to .env (never commit it).
-npm run register
-npm run dev
+pnpm run register
+pnpm run dev
 ```
 
 If `.env` already exists, edit it instead of copying over it. `.env` and `.env.*` are ignored, except the empty `.env.example` template.
@@ -31,7 +31,7 @@ In the [Developer Portal](https://discord.com/developers/applications/1550468456
 
 [Install SirenCall in the test server](https://discord.com/oauth2/authorize?client_id=1550468456678170684&scope=bot%20applications.commands&permissions=19456&guild_id=1422967166088773664&disable_guild_select=true). Requested permissions: View Channels, Send Messages, Embed Links. No Administrator, Manage Roles, or Mention Everyone permission for the bot.
 
-The process must stay running for the bot to respond. `npm start` runs the built output; `npm run dev` rebuilds first. Command registration upserts only `/ping`, leaving other commands alone.
+The process must stay running for the bot to respond. `pnpm start` runs the built output; `pnpm run dev` rebuilds first. Command registration upserts only `/ping`, leaving other commands alone.
 
 ## Lua API
 
@@ -129,8 +129,8 @@ Lua output must be a dense list of IDs. The host checks membership in the eligib
 ## Check behavior
 
 ```sh
-npm test
-npm run preview -- examples/class.lua examples/context.json
+pnpm test
+pnpm run preview examples/class.lua examples/context.json
 ```
 
 The small test suite covers recipient semantics, arbitrary Lua control flow, runaway/memory failures, host isolation, full-audience authorization, notification batching, and partial delivery. Future language adapters can reuse `selectionContract` with their own scenario source strings. CI runs the same build and tests without a bot token.
