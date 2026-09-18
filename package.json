@@ -1,0 +1,39 @@
+{
+  "name": "siren-call",
+  "version": "1.0.0",
+  "description": "Lua-powered Discord audience selection",
+  "scripts": {
+    "build": "tsc && cp src/languages/lua/runtime.lua dist/languages/lua/runtime.lua",
+    "start": "node --env-file-if-exists=.env dist/discord/bot.js",
+    "dev": "npm run build && npm start",
+    "register": "npm run build && node --env-file-if-exists=.env dist/discord/register.js",
+    "test": "npm run build && vitest run",
+    "check": "npm test",
+    "preview": "npm run build && node dist/preview.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Aminmiri82/siren-call.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/Aminmiri82/siren-call/issues"
+  },
+  "homepage": "https://github.com/Aminmiri82/siren-call#readme",
+  "dependencies": {
+    "discord.js": "^14.27.0",
+    "wasmoon": "^1.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.1",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.1"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=24.17.0"
+  }
+}

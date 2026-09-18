@@ -1,0 +1,9 @@
+{
+  "callerId": "101",
+  "roles": [{ "id": "10", "name": "L1" }, { "id": "20", "name": "L2" }],
+  "members": [
+    { "id": "101", "name": "Yara", "roleIds": [], "joinedAt": "2026-09-01T00:00:00.000Z" },
+    { "id": "102", "name": "L1 member", "roleIds": ["10"], "joinedAt": "2026-09-01T00:00:00.000Z" },
+    { "id": "103", "name": "New member", "roleIds": [], "joinedAt": "2026-09-19T00:00:00.000Z" }
+  ]
+}
