@@ -1,9 +1,9 @@
 import {
-  ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, Client, Events,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, Client, Collection, Events,
   GatewayIntentBits, MessageFlags, ModalBuilder, PermissionFlagsBits, TextInputBuilder,
   TextInputStyle,
 } from 'discord.js';
-import type { ButtonInteraction, ChatInputCommandInteraction, GuildTextBasedChannel, ModalSubmitInteraction } from 'discord.js';
+import type { ButtonInteraction, ChatInputCommandInteraction, GuildMember, GuildTextBasedChannel, ModalSubmitInteraction } from 'discord.js';
 import { randomUUID } from 'node:crypto';
 import { LuaSelectionLanguage } from '../languages/lua/index.js';
 import { batches, deliver, limits, permissionProblem, validatePlan } from '../selection.js';
@@ -27,7 +27,18 @@ async function snapshot(interaction: Interaction): Promise<{ context: CompileCon
   }
   // Fetch roles and members, rather than treating a partial cache as everyone.
   await guild.roles.fetch();
-  const members = await guild.members.fetch();
+  // Gateway REQUEST_GUILD_MEMBERS is heavily limited even between preview/send.
+  // REST pagination goes through discord.js's rate-limit queue instead.
+  const members = new Collection<string, GuildMember>();
+  let after: string | undefined;
+  while (true) {
+    const page = await guild.members.list({ limit: 1000, after });
+    for (const [id, member] of page) members.set(id, member);
+    if (page.size < 1000) break;
+    const next = page.lastKey();
+    if (!next || next === after) throw new Error('Could not fetch a complete member list. Try again.');
+    after = next;
+  }
   const caller = await guild.members.fetch({ user: interaction.user.id, force: true });
   const bot = await guild.members.fetchMe({ force: true });
   const callerPermissions = channel.permissionsFor(caller);
@@ -44,6 +55,10 @@ async function snapshot(interaction: Interaction): Promise<{ context: CompileCon
   if (!callerPermissions.has(required) || caller.isCommunicationDisabled()) sendProblem = 'You cannot send messages in this channel.';
   else if (!botPermissions.has(required) || bot.isCommunicationDisabled()) sendProblem = 'The bot needs View Channel and Send Messages here and must not be timed out.';
   return { context, canMentionEveryone: callerPermissions.has(PermissionFlagsBits.MentionEveryone), channel, sendProblem };
+}
+
+function quantity(count: number, singular: string, plural = singular + 's') {
+  return `${count} ${count === 1 ? singular : plural}`;
 }
 
 function controls(id: string, blocked: boolean) {
@@ -66,7 +81,7 @@ async function preview(interaction: ChatInputCommandInteraction | ModalSubmitInt
     previews.set(id, { owner: interaction.user.id, channel: interaction.channelId!, plan, expires: Date.now() + limits.previewMs });
     const names = plan.recipients.slice(0, 12).map(id => state.context.members.find(member => member.id === id)!.name).join(', ');
     const description = [
-      `**${plan.recipients.length} recipients · ${batches(plan).length} messages**`,
+      `**${quantity(plan.recipients.length, "recipient")} · ${quantity(batches(plan).length, "message")}**`,
       problem ? `**Cannot send:** ${problem}` : '**Ready to send.** Your permissions and the bot’s permissions allow this selection.',
       `Recipients: ${names || '(none)'}${plan.recipients.length > 12 ? ', …' : ''}`,
       'Notification delivery depends on each member’s Discord settings and cannot be checked.',
@@ -104,7 +119,7 @@ async function handleButton(interaction: ButtonInteraction) {
   const result = await deliver(plan, batch => state.channel.send(batch));
   const removed = saved.plan.recipients.length - plan.recipients.length;
   const outcome = result.complete
-    ? `Sent ${result.sentMessages} messages mentioning ${result.sentRecipients} people.`
+    ? `Sent ${quantity(result.sentMessages, "message")} mentioning ${quantity(result.sentRecipients, "person", "people")}.`
     : `Delivery stopped after ${result.sentMessages} confirmed messages (${result.sentRecipients} recipients). The failed request may have reached Discord; nothing was retried automatically.`;
   await interaction.editReply({ content: outcome + (removed ? `\nSkipped ${removed} recipients who are no longer eligible.` : '') });
 }
