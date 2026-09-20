@@ -1,10 +1,9 @@
-import { limits } from '../../selection.js';
 import { fail } from './diagnostics.js';
 import type { Span } from './diagnostics.js';
-import { Names } from './names.js';
+import type { NameLookup } from './types.js';
 
 const keywords = new Set(
-  'PING SAYING LET IF THEN ELSE END WHILE DO FOR IN AND OR XOR NOT TRUE FALSE NULL NONE CALLER MEMBERS MESSAGES COUNT MEMBER ROLE JOINED_AFTER CONTAINS TEXT'.split(
+  'RETURN PING SAYING LET IF THEN ELSE END WHILE DO FOR IN AND OR XOR NOT TRUE FALSE NULL NONE CALLER MEMBERS MESSAGES COUNT MEMBER ROLE JOINED_AFTER CONTAINS TEXT'.split(
     ' ',
   ),
 );
@@ -16,7 +15,7 @@ interface Token extends Span {
 }
 export type Expr = Span &
   (
-    | { kind: 'literal'; value: string | number | boolean | null }
+    | { kind: 'literal'; value: string | bigint | number | boolean | null }
     | { kind: 'name'; name: string; reference: 'either' | 'member' | 'role' }
     | { kind: 'audience'; name: 'everyone' | 'here' }
     | { kind: 'variable'; name: string }
@@ -29,12 +28,13 @@ export type Statement = Span &
   (
     | { kind: 'let' | 'assign'; name: string; value: Expr }
     | { kind: 'ping'; recipients: Expr; message: Expr }
+    | { kind: 'return'; value: Expr }
     | { kind: 'if'; condition: Expr; yes: Statement[]; no: Statement[] }
     | { kind: 'while'; condition: Expr; body: Statement[] }
     | { kind: 'for'; name: string; collection: Expr; body: Statement[] }
   );
 
-function lex(source: string, names: Names): Token[] {
+function lex(source: string, names: NameLookup): Token[] {
   const tokens: Token[] = [];
   let i = 0;
   const add = (kind: string, start: number, text = source.slice(start, i)) =>
@@ -179,7 +179,7 @@ const precedence: Record<string, number> = {
   '>=': 5,
 };
 
-export function parse(source: string, names: Names): Statement[] {
+export function parse(source: string, names: NameLookup, depthLimit: number): Statement[] {
   const tokens = lex(source, names);
   let at = 0;
   let depth = 0;
@@ -201,7 +201,7 @@ export function parse(source: string, names: Names): Statement[] {
     if (grouping) separators();
   };
   const nested = <T>(fn: () => T): T => {
-    if (++depth > limits.singDepth)
+    if (++depth > depthLimit)
       fail(
         source,
         current(),
@@ -223,7 +223,12 @@ export function parse(source: string, names: Names): Statement[] {
         left = {
           ...token,
           kind: 'literal',
-          value: token.kind === 'string' ? token.text : Number(token.text),
+          value:
+            token.kind === 'string'
+              ? token.text
+              : token.text.includes('.')
+                ? Number(token.text)
+                : BigInt(token.text),
         };
       else if (['TRUE', 'FALSE', 'NULL'].includes(token.kind))
         left = {
@@ -347,6 +352,10 @@ export function parse(source: string, names: Names): Statement[] {
       const value = expression();
       return { ...span(), kind: token.kind === 'LET' ? 'let' : 'assign', name, value };
     }
+    if (token.kind === 'RETURN') {
+      const value = expression();
+      return { ...span(), kind: 'return', value };
+    }
     if (token.kind === 'PING') {
       const recipients = expression();
       expect('SAYING', 'Expected SAYING followed by a message.');
@@ -385,7 +394,7 @@ export function parse(source: string, names: Names): Statement[] {
       source,
       token,
       'statement',
-      'Expected LET, IF, FOR, WHILE, an assignment, or PING.',
+      'Expected LET, IF, FOR, WHILE, an assignment, RETURN, or PING.',
     );
   }
   return block([]);

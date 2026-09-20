@@ -1,0 +1,21 @@
+# A two-counter machine: transfer a into b, then halt.
+LET a = 12
+LET b = 9007199254740992
+LET pc = 1
+WHILE pc != 0 DO
+  # Freeze dispatch so an updated pc cannot run another instruction this iteration.
+  LET instruction = pc
+  IF instruction == 1 THEN
+    IF a == 0 THEN
+      pc = 0
+    ELSE
+      a = a - 1
+      pc = 2
+    END
+  END
+  IF instruction == 2 THEN
+    b = b + 1
+    pc = 1
+  END
+END
+RETURN b

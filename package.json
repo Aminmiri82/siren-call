@@ -12,6 +12,7 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "check": "pnpm run lint && pnpm run typecheck && pnpm test",
+    "sing": "pnpm run build && node dist/sing-cli.js",
     "preview": "pnpm run build && node dist/preview.js"
   },
   "repository": {

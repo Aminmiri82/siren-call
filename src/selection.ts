@@ -51,6 +51,7 @@ export const limits = {
   singSteps: 1_000_000,
   singDepth: 100,
   singStringLength: 16_000,
+  singIntegerDigits: 16_000,
   singHeapMb: 64,
   luaMemoryBytes: 16 * 1024 * 1024,
   executionMs: 2_000,

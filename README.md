@@ -27,6 +27,21 @@ person who ran the command.
 
 `/ping` opens the default Lua editor; `/ping language:Sing` opens the Sing editor. Submit a script to get a private recipient/permission preview, then choose **Send ping** or **Cancel**. You can also put short scripts directly in `/ping script:...`.
 
+## Standalone Sing
+
+Sing also runs without Discord. Its TypeScript core supports exact integers, variables,
+conditionals, loops, and scalar `RETURN` values:
+
+```sh
+pnpm run sing examples/counter.sing
+# Returns 9007199254741004 exactly.
+```
+
+See the [CLI and embedding guide](docs/sing-cli.md) and [language specification](docs/sing-spec.md).
+The abstract integer core is Turing complete; the CLI and bot retain resource limits.
+Whole-number literals and `COUNT` are exact integers; decimal literals remain floating-point.
+Mixing them in arithmetic is an error. `RETURN` is newly reserved; Discord scripts still use `PING`.
+
 ## Run locally
 
 Requires Node.js 24.17+, pnpm 10.33.0 (pinned in `package.json`), and a Discord bot application. If pnpm is not available, run `corepack enable` first.
@@ -74,17 +89,6 @@ Discord command → SelectionLanguage.compile(source, context)
                 → recheck + batched delivery
 ```
 
-- `src/selection.ts`: plain types, shared limits, output validation, permission policy, batching, and delivery outcomes.
-- `src/members.ts`: language-independent member-name and mention resolution.
-- `src/languages/index.ts`: the adapter registry.
-- `src/languages/lua/`: Wasmoon Lua adapter and isolated execution worker.
-- `src/languages/sing/`: Sing lexer, parser, interpreter, structured diagnostics, and isolated worker.
-- `src/discord/context.ts`: member and role fetching, and Discord-to-snapshot conversion.
-- `src/discord/ui.ts`: the editor modal, buttons, and preview rendering.
-- `src/discord/ping.ts`: the `/ping` flow, from compile through preview to rechecked delivery.
-- `src/discord/bot.ts`: client wiring and interaction routing.
-- `src/preview.ts`: run the same language contract without Discord.
-
 A new language implements `SelectionLanguage`:
 
 ```ts
@@ -102,8 +106,8 @@ Sing runs in a fresh worker with an empty environment and a 64 MiB JavaScript ol
 heap limit. It interprets a closed syntax tree, never JavaScript or Lua source, and exposes only
 plain snapshot fields and documented built-ins. It shares the source, startup, execution, and
 output limits below. Additional Sing bounds are 1,000,000 evaluation work units (including set
-and string work), 100 levels of parser/evaluator nesting, and 16,000 UTF-16 code units per
-intermediate string. Worker limits are not a total process RSS limit. See the
+and string work), 100 levels of parser/evaluator nesting, 16,000 UTF-16 code units per
+intermediate string, and 16,000 decimal digits per exact integer. Worker limits are not a total process RSS limit. See the
 [Sing reference](docs/sing.md) for details.
 
 Lua runs in a fresh worker with an empty environment and no JavaScript object proxies. One narrow host callback resolves a member name to an ID using the shared resolver in `src/members.ts`; it has no Discord client, filesystem, or network access. User code receives an explicit Lua environment: no `io`, `os`, `package`, `require`, `debug`, `load`, or filesystem/network APIs. Unknown globals go through one metamethod that resolves a bare name to a role or member using that same callback, and evaluates to `nil` when nothing matches, so a typo still fails as a nil value. Loading source uses Lua's text-only mode.

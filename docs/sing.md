@@ -3,6 +3,10 @@
 Sing selects Discord ping recipients using names from the channel's eligible member snapshot
 and server roles. Its adapter ID is `sing`; its file extension is `.sing`.
 
+For programs without Discord, see the [standalone CLI guide](sing-cli.md). The
+[language specification](sing-spec.md) defines grammar, numeric types, execution semantics,
+compatibility changes, and the abstract core's Turing-completeness argument.
+
 ```text
 PING @Teachers - @John Doe SAYING "Class is cancelled"
 ```
@@ -110,7 +114,12 @@ Precedence, highest first: field access and calls; unary `NOT` and `-`; comparis
 Use parentheses for mixed expressions. Write `NOT (COUNT(a) > 0)` to negate a comparison.
 Comparisons are binary; write `x > 0 AND x < 10`, not `0 < x < 10`.
 
-Numbers support `+`, `-`, and comparisons. Strings support `+` for concatenation, equality,
+Whole-number literals are arbitrary-precision exact integers; decimal literals (such as `1.0`)
+are finite binary64 floating-point values. Both support `+`, `-`, and comparisons within their
+own kind. `COUNT` returns an integer. Mixed integer/decimal arithmetic and ordering are errors;
+`1 == 1.0` is false, without implicit conversion. This differs from the previous all-floating-point
+implementation. Use `(x + 1) > 2` for arithmetic comparisons: legacy comparison precedence is
+higher than `+`/`-`. Strings support `+` for concatenation, equality,
 and lexicographic comparisons. Ordered comparisons require two numbers or two strings.
 Equality and inequality (`==`, `!=`) compare scalar values without type coercion; they do not
 compare sets or records. Booleans use `TRUE`, `FALSE`, `AND`, `OR`, `XOR`, and `NOT`.
@@ -179,7 +188,9 @@ not change that iteration. `WHILE` reevaluates its boolean condition each time. 
 
 The first executed `PING` ends evaluation and returns its plan, including from inside a loop
 or branch. The complete source must still parse. Reaching the end without executing `PING`
-is an error. An empty selection yields a preview that cannot be sent, just as with Lua.
+is an error. `RETURN` is reserved for standalone scalar results and cannot replace `PING` in a
+Discord selection script. Variables formerly named `return` must be renamed, and recipient names
+containing that reserved word must be quoted. An empty selection yields a preview that cannot be sent, just as with Lua.
 
 ## Context and built-ins
 
@@ -239,7 +250,8 @@ Source is limited to 16,000 UTF-8 bytes (Discord inputs additionally cap it at 4
 Execution runs in a dedicated worker with an empty environment, a 10-second startup deadline,
 a 2-second execution deadline, and a 64 MiB old-generation heap limit. These are not total
 process memory limits. Sing also limits work to 1,000,000 units, nesting to 100 levels,
-and each intermediate string to 16,000 UTF-16 code units. Set scans and string operations
+each intermediate string to 16,000 UTF-16 code units, and integer magnitudes to 16,000 decimal
+digits. Exact integer operations consume work based on digit lengths. Set scans and string operations
 consume work proportional to their inputs; a large snapshot may require a simpler script.
 Parser depth includes blocks and expression recursion, so the accepted number of written
 parentheses can be slightly below 100. All bounds live in `src/selection.ts`.
