@@ -380,9 +380,9 @@ describe('Sing diagnostics and bounds', () => {
   });
 });
 
-it('registers Sing and supplies a matching Discord editor without changing the default', () => {
+it('registers Sing as the default and supplies a matching Discord editor', () => {
   expect(language('sing').id).toBe('sing');
-  expect(defaultLanguageId).toBe('lua');
+  expect(defaultLanguageId).toBe('sing');
   const modal = JSON.stringify(scriptModal('sing').toJSON());
   expect(modal).toContain('ping:sing');
   expect(modal).toContain('Siren Call · Sing');

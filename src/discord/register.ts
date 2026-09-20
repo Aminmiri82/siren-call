@@ -3,12 +3,12 @@ import { applicationId, guildId, token } from './config.js';
 
 const command = new SlashCommandBuilder()
   .setName('ping')
-  .setDescription('Select recipients with Lua or Sing, preview, then send.')
+  .setDescription('Select recipients with Sing or Lua, preview, then send.')
   .addStringOption(option =>
     option
       .setName('language')
-      .setDescription('Selection language (default: Lua).')
-      .addChoices({ name: 'Lua', value: 'lua' }, { name: 'Sing', value: 'sing' }),
+      .setDescription('Selection language (default: Sing).')
+      .addChoices({ name: 'Sing', value: 'sing' }, { name: 'Lua', value: 'lua' }),
   )
   .addStringOption(option =>
     option

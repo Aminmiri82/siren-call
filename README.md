@@ -1,6 +1,6 @@
 # Siren Call
 
-A Discord bot for doing arithmetic on pings, using **Lua** or **Sing**.
+A Discord bot for doing arithmetic on pings, using **Sing** or **Lua**.
 
 Sing is a purpose-built language for selecting recipients by their server names:
 
@@ -8,11 +8,11 @@ Sing is a purpose-built language for selecting recipients by their server names:
 PING @Teachers - @John Doe SAYING "Class is cancelled"
 ```
 
-Use `/ping language:Sing` to open its editor, or supply a short `script` directly.
-The adapter ID is `sing`. Use `@everyone` for all eligible members and `@here` for active
+Sing is the default language, so `/ping` opens its editor; you can also supply a short `script`
+directly. The adapter ID is `sing`. Use `@everyone` for all eligible members and `@here` for active
 members (online or Do Not Disturb; excludes idle/offline/invisible). Keywords and built-ins are case-insensitive; names may contain spaces and accents.
 See the [Sing language reference](docs/sing.md) for operators, quoted names, variables,
-control flow, built-ins, diagnostics, and limits. Lua remains the default for existing commands:
+control flow, built-ins, diagnostics, and limits. Lua is still available with `/ping language:Lua`:
 
 ```lua
 return {
@@ -25,7 +25,7 @@ A bare name that is a valid Lua identifier resolves to the role or member it nam
 above can also be written `everyone() - (L1 + L2) - joined_after("2026-09-18")`. `caller` is the
 person who ran the command.
 
-`/ping` opens the default Lua editor; `/ping language:Sing` opens the Sing editor. Submit a script to get a private recipient/permission preview, then choose **Send ping** or **Cancel**. You can also put short scripts directly in `/ping script:...`.
+`/ping` opens the default Sing editor; `/ping language:Lua` opens the Lua editor. Submit a script to get a private recipient/permission preview, then choose **Send ping** or **Cancel**. You can also put short scripts directly in `/ping script:...`.
 
 ## Standalone Sing
 
@@ -126,16 +126,17 @@ Lua output must be a dense list of IDs. The host checks membership in the eligib
 ```sh
 pnpm run check   # lint, format check, typecheck, tests
 pnpm test
-pnpm run preview examples/class.lua examples/context.json
-pnpm run preview examples/class.sing examples/context.json sing
+pnpm run preview examples/class.sing examples/context.json
+pnpm run preview examples/class.lua examples/context.json lua
 ```
 
 The test suite covers both language adapters, Sing name matching and diagnostics, control flow, runaway/memory failures, host isolation, full-audience authorization, notification batching, and partial delivery. Future language adapters can reuse `selectionContract` with their own scenario source strings. Tests run against the built output in `dist/`, because the Lua adapter resolves its worker and `runtime.lua` relative to its own compiled location; the Vitest global setup builds first, so a bare `vitest` cannot test stale output. CI runs `pnpm run check` without a bot token. `AGENTS.md` covers the conventions for changing this code.
 
-For a live smoke test, run `/ping` in the test server and use the default `member(caller_id)` script. Check the private preview, send, and confirm the bot mentions only you. Also try Cancel and a script with `everyone()` using an account without Mention Everyone; it should preview as blocked. Automated local tests do not prove actual notification delivery.
+For a live smoke test, run `/ping` in the test server and use the default Sing
+`PING CALLER SAYING "The siren calls!"` script. Check the private preview, send, and confirm the bot mentions only you. Also try Cancel and a script with `@everyone` using an account without Mention Everyone; it should preview as blocked. Automated local tests do not prove actual notification delivery.
 
-Sing is covered by local automated tests; live Discord behavior must be checked after registering
-the updated command. A Sing smoke test is `/ping language:Sing` with the default
-`PING CALLER SAYING "The siren calls!"` script, followed by preview, Send ping, and Cancel.
+Lua is covered by local automated tests; after changing the default, live Discord behavior must be
+checked again with `pnpm run register`. A Lua smoke test is `/ping language:Lua` with the default
+`member(caller_id)` script, followed by preview, Send ping, and Cancel.
 
 Live Lua validation on 2026-09-18: installed in the test server, registered `/ping`, opened the Lua modal, previewed a self-only selection, and sent one message mentioning only the invoking user. Verified the visible message and Discord API response (`mention_everyone: false`). The first live send revealed a Gateway member-fetch rate limit; switching to REST pagination resolved it. Full-audience denial is covered by the shared policy test, not a second live user account.

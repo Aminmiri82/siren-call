@@ -19,7 +19,7 @@ pnpm run preview examples/class.sing examples/context.json sing
 
 The result is one recipient set and one message. The bot still validates it, checks permissions,
 shows a private preview, and waits for Send ping. Sing never sends messages during evaluation.
-Lua remains the default language. Existing installations must run `pnpm run register` to expose
+Sing is the default language. Existing installations must run `pnpm run register` to expose
 the new language choice in Discord.
 
 ## Names
