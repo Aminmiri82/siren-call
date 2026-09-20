@@ -13,10 +13,22 @@ export interface Member {
   joinedAt: string | null;
 }
 
+/** A message already visible in the channel to anyone who can run `/ping` there. */
+export interface ChannelMessage {
+  id: string;
+  authorId: string;
+  authorName: string;
+  bot: boolean;
+  content: string;
+  createdAt: string;
+}
+
 export interface CompileContext {
   members: Member[];
   roles: { id: string; name: string }[];
   callerId: string;
+  /** Oldest first, so an adapter can hand it to something that expects a transcript. */
+  messages: ChannelMessage[];
 }
 
 export interface PingPlan {
@@ -30,6 +42,9 @@ export const limits = {
   /** Loose byte guard inside Lua; `messageLength` in UTF-16 units is the authoritative check. */
   messageBytes: 6_000,
   recipients: 5_000,
+  contextMessages: 10,
+  /** Discord's own non-Nitro message cap, so this truncates almost nothing in practice. */
+  contextMessageChars: 2_000,
   luaMemoryBytes: 16 * 1024 * 1024,
   executionMs: 2_000,
   startupMs: 10_000,

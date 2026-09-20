@@ -29,17 +29,24 @@ local function select_members(predicate)
   return set(ids)
 end
 local function everyone() return select_members(function() return true end) end
-local function role(name)
-  local matches = {}
-  for _, r in ipairs(context.roles) do
-    if r.id == name then matches = {r}; break end
-    if r.name == name then matches[#matches + 1] = r end
-  end
-  assert(#matches == 1, #matches == 0 and 'Unknown role: '..tostring(name) or 'Ambiguous role name; use its ID: '..tostring(name))
+local function holders(role_id)
   return select_members(function(member)
-    for _, id in ipairs(member.roleIds) do if id == matches[1].id then return true end end
+    for _, id in ipairs(member.roleIds) do if id == role_id then return true end end
     return false
   end)
+end
+local function roles_named(name)
+  local matches = {}
+  for _, r in ipairs(context.roles) do
+    if r.id == name then return {r} end
+    if r.name == name then matches[#matches + 1] = r end
+  end
+  return matches
+end
+local function role(name)
+  local matches = roles_named(name)
+  assert(#matches == 1, #matches == 0 and 'Unknown role: '..tostring(name) or 'Ambiguous role name; use its ID: '..tostring(name))
+  return holders(matches[1].id)
 end
 local resolve_member = resolve_member
 local function member(reference)
@@ -63,11 +70,27 @@ local env = {
   tonumber=tonumber, tostring=tostring, type=type, pcall=pcall, xpcall=xpcall,
   math=math, string=string, table=table, utf8=utf8,
   everyone=everyone, role=role, member=member, joined_after=joined_after,
-  select=select_members, members=context.members, caller_id=context.callerId,
+  select=select_members, members=context.members, messages=context.messages,
+  caller_id=context.callerId, caller=set({context.callerId}),
   union=function(a,b) return combine(a,b,'union') end,
   intersection=function(a,b) return combine(a,b,'intersection') end,
   difference=function(a,b) return combine(a,b,'difference') end,
 }
+-- Bare `Teachers` or `raphe22` names a role or member. Unmatched globals stay nil, so a typo
+-- still fails as a nil value rather than as a confusing lookup error.
+setmetatable(env, {__index = function(_, key)
+  if type(key) ~= 'string' then return nil end
+  local matched_roles = roles_named(key)
+  local id, problem, kind = resolve_member(key)
+  if id and #matched_roles > 0 then
+    error('"'..key..'" is both a role and a member here. Write role("'..key..'") or member("'..key..'").', 2)
+  end
+  if id then return set({id}) end
+  if kind == 'ambiguous' then error(problem, 2) end
+  if #matched_roles > 1 then error('Ambiguous role name; use its ID: '..key, 2) end
+  if #matched_roles == 1 then return holders(matched_roles[1].id) end
+  return nil
+end})
 local fn, problem = load(source, 'siren', 't', env)
 assert(fn, problem)
 local result = fn()

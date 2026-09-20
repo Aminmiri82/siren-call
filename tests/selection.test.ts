@@ -22,6 +22,24 @@ const context: CompileContext = {
     },
     { id: '104', name: 'Bóth roles', roleIds: [], joinedAt: '2026-09-19T00:00:00.000Z' },
   ],
+  messages: [
+    {
+      id: '9001',
+      authorId: '103',
+      authorName: 'chèvre',
+      bot: false,
+      content: 'is the class still on?',
+      createdAt: '2026-09-19T09:00:00.000Z',
+    },
+    {
+      id: '9002',
+      authorId: '101',
+      authorName: 'Yara',
+      bot: true,
+      content: 'asking now',
+      createdAt: '2026-09-19T09:01:00.000Z',
+    },
+  ],
 };
 
 // Each future adapter supplies its spelling of these scenarios. Assertions stay shared.
@@ -86,9 +104,11 @@ selectionContract(lua, {
     'CHEVRE',
     'che\u0300vre',
     'Raphaël',
-  ].map(
-    reference => `return { recipients = everyone() - member("${reference}"), message = "Hello" }`,
-  ),
+  ]
+    .map(
+      reference => `return { recipients = everyone() - member("${reference}"), message = "Hello" }`,
+    )
+    .concat('return { recipients = everyone() - raphe22, message = "Hello" }'),
   ambiguous: 'return { recipients = member("Both roles"), message = "Hello" }',
 });
 
@@ -118,6 +138,26 @@ it('enforces the shared limits inside Lua, not just at the host boundary', async
     for i = 1, ${limits.recipients + 1} do ids[i] = "101" end
     return { recipients = ids, message = "hi" }`;
   await expect(lua.compile(source, context)).rejects.toThrow(`maximum ${limits.recipients}`);
+});
+
+it('resolves bare role and member names, and keeps unmatched globals nil', async () => {
+  const run = async (source: string) =>
+    validatePlan(await lua.compile(source, context), context).recipients.toSorted();
+  expect(await run('return { recipients = caller, message = "hi" }')).toEqual(['101']);
+  expect(await run('return { recipients = L1 + L2, message = "hi" }')).toEqual(['102', '103']);
+  expect(await run('return { recipients = raphe22, message = "hi" }')).toEqual(['103']);
+  // A typo is still a nil value, not a member lookup failure.
+  await expect(
+    lua.compile('return { recipients = everyon(), message = "hi" }', context),
+  ).rejects.toThrow('nil value');
+});
+
+it('exposes recent channel messages to the script', async () => {
+  const source = `local lines = {}
+    for _, m in ipairs(messages) do lines[#lines+1] = m.authorName..": "..m.content end
+    return { recipients = {}, message = table.concat(lines, " | ").." /"..tostring(messages[2].bot) }`;
+  const plan = await lua.compile(source, context);
+  expect(plan.message).toBe('chèvre: is the class still on? | Yara: asking now /true');
 });
 
 it('requires Mention Everyone for a full audience regardless of how IDs were selected', () => {

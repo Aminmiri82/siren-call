@@ -1,12 +1,51 @@
 {
   "callerId": "101",
   "roles": [
-    { "id": "10", "name": "L1" },
-    { "id": "20", "name": "L2" }
+    {
+      "id": "10",
+      "name": "L1"
+    },
+    {
+      "id": "20",
+      "name": "L2"
+    }
   ],
   "members": [
-    { "id": "101", "name": "Yara", "roleIds": [], "joinedAt": "2026-09-01T00:00:00.000Z" },
-    { "id": "102", "name": "L1 member", "roleIds": ["10"], "joinedAt": "2026-09-01T00:00:00.000Z" },
-    { "id": "103", "name": "New member", "roleIds": [], "joinedAt": "2026-09-19T00:00:00.000Z" }
+    {
+      "id": "101",
+      "name": "Yara",
+      "roleIds": [],
+      "joinedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+      "id": "102",
+      "name": "L1 member",
+      "roleIds": ["10"],
+      "joinedAt": "2026-09-01T00:00:00.000Z"
+    },
+    {
+      "id": "103",
+      "name": "New member",
+      "roleIds": [],
+      "joinedAt": "2026-09-19T00:00:00.000Z"
+    }
+  ],
+  "messages": [
+    {
+      "id": "9001",
+      "authorId": "102",
+      "authorName": "L1 member",
+      "bot": false,
+      "content": "is the class still on tomorrow?",
+      "createdAt": "2026-09-19T09:00:00.000Z"
+    },
+    {
+      "id": "9002",
+      "authorId": "101",
+      "authorName": "Yara",
+      "bot": false,
+      "content": "checking with the teacher now",
+      "createdAt": "2026-09-19T09:01:00.000Z"
+    }
   ]
 }

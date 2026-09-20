@@ -2,6 +2,9 @@ import type { CompileContext } from './selection.js';
 
 const normalize = (name: string) => name.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 
+/** Distinguishable from "no match" so an adapter can fall through on one but not the other. */
+export class AmbiguousMemberError extends Error {}
+
 /** Shared by language adapters; never guess between matching people. */
 export function resolveMember(reference: string, context: CompileContext): string {
   const id =
@@ -22,7 +25,7 @@ export function resolveMember(reference: string, context: CompileContext): strin
     );
   }
   if (matches.length > 1) {
-    throw new Error(
+    throw new AmbiguousMemberError(
       `Ambiguous member name: “${reference}”. Use a Discord mention or user ID to choose one person.`,
     );
   }

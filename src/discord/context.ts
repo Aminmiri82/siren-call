@@ -8,7 +8,8 @@ import type {
   ModalSubmitInteraction,
   Role,
 } from 'discord.js';
-import type { CompileContext } from '../selection.js';
+import type { ChannelMessage, CompileContext } from '../selection.js';
+import { limits } from '../selection.js';
 import { guildId } from './config.js';
 
 export type Interaction = ChatInputCommandInteraction | ModalSubmitInteraction | ButtonInteraction;
@@ -36,15 +37,36 @@ async function listMembers(guild: Guild): Promise<Collection<string, GuildMember
   }
 }
 
+// Message content is gated on the Message Content intent being enabled for the application.
+// Without it Discord returns empty strings rather than failing, and the bot may also lack Read
+// Message History, so recent messages are best-effort context and never block a ping.
+async function listMessages(channel: GuildTextBasedChannel): Promise<ChannelMessage[]> {
+  try {
+    const page = await channel.messages.fetch({ limit: limits.contextMessages });
+    return [...page.values()].toReversed().map(message => ({
+      id: message.id,
+      authorId: message.author.id,
+      authorName: message.member?.displayName ?? message.author.displayName,
+      bot: message.author.bot,
+      content: message.content.slice(0, limits.contextMessageChars),
+      createdAt: new Date(message.createdTimestamp).toISOString(),
+    }));
+  } catch {
+    return [];
+  }
+}
+
 /** Discord objects in, plain snapshots out. Adapters never see anything richer than this. */
 export function toCompileContext(
   members: Iterable<GuildMember>,
   roles: Iterable<Role>,
+  messages: ChannelMessage[],
   channel: GuildTextBasedChannel,
   callerId: string,
 ): CompileContext {
   return {
     callerId,
+    messages,
     members: [...members]
       .filter(
         member =>
@@ -82,6 +104,7 @@ export async function snapshot(interaction: Interaction): Promise<ChannelSnapsho
   // Fetch roles and members, rather than treating a partial cache as everyone.
   await guild.roles.fetch();
   const members = await listMembers(guild);
+  const messages = await listMessages(channel);
   const caller = await guild.members.fetch({ user: interaction.user.id, force: true });
   const bot = await guild.members.fetchMe({ force: true });
   const callerPermissions = channel.permissionsFor(caller);
@@ -95,7 +118,13 @@ export async function snapshot(interaction: Interaction): Promise<ChannelSnapsho
     sendProblem = 'The bot needs View Channel and Send Messages here and must not be timed out.';
   }
   return {
-    context: toCompileContext(members.values(), guild.roles.cache.values(), channel, caller.id),
+    context: toCompileContext(
+      members.values(),
+      guild.roles.cache.values(),
+      messages,
+      channel,
+      caller.id,
+    ),
     channel,
     canMentionEveryone: callerPermissions.has(PermissionFlagsBits.MentionEveryone),
     sendProblem,

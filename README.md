@@ -9,6 +9,10 @@ return {
 }
 ```
 
+A bare name that is a valid Lua identifier resolves to the role or member it names, so the script
+above can also be written `everyone() - (L1 + L2) - joined_after("2026-09-18")`. `caller` is the
+person who ran the command.
+
 `/ping` opens a Lua editor. Submit a script to get a private recipient/permission preview, then choose **Send ping** or **Cancel**. You can also put short scripts directly in `/ping script:...`.
 
 ## Run locally
@@ -27,11 +31,12 @@ If `.env` already exists, edit it instead of copying over it. `.env` and `.env.*
 
 The default application is `1550468456678170684`, and commands are registered only in test server `1422967166088773664`. Override these with `DISCORD_APPLICATION_ID` and `DISCORD_GUILD_ID`.
 
-In the [Developer Portal](https://discord.com/developers/applications/1550468456678170684/bot), enable **Server Members Intent** and save. Presence and Message Content intents are not needed. This bot uses a Gateway connection, so it needs no public web server, interactions endpoint, or public-key configuration.
+In the [Developer Portal](https://discord.com/developers/applications/1550468456678170684/bot), enable **Server Members Intent** and save. Enable **Message Content Intent** as well if you want scripts to read the recent-message context; without it Discord returns those messages with empty `content`, and everything else still works. The Presence intent is not needed. This bot uses a Gateway connection, so it needs no public web server, interactions endpoint, or public-key configuration.
 
 [Install SirenCall in the test server](https://discord.com/oauth2/authorize?client_id=1550468456678170684&scope=bot%20applications.commands&permissions=19456&guild_id=1422967166088773664&disable_guild_select=true). Requested permissions: View Channels, Send Messages, Embed Links. No Administrator, Manage Roles, or Mention Everyone permission for the bot.
 
 The process must stay running for the bot to respond. `pnpm start` runs the built output; `pnpm run dev` rebuilds first. Command registration upserts only `/ping`, leaving other commands alone.
+
 ## Permissions and preview semantics
 
 The bot checks the caller's effective channel permissions, including role/channel overwrites, and the bot's ability to send there. A selection covering **all eligible humans** requires the caller's **Mention Everyone** permission. This is checked on the final recipient set, so spelling out all IDs does not bypass it. Smaller selections do not require Mention Everyone, and role mentionability is intentionally not checked.
@@ -39,6 +44,8 @@ The bot checks the caller's effective channel permissions, including role/channe
 This is deliberately a full-audience rule, not a general anti-spam system: selecting everyone except one person or making several smaller requests is still allowed. In a channel with one eligible human, selecting that person is a full-audience selection and requires Mention Everyone.
 
 The bot sends individual user mentions only. Literal `@everyone`, `@here`, role mentions, and unselected user mentions in the message cannot expand the recipient list. Discord exposes whether sending is permitted, **not** whether someone will receive a push notification or has personal notification suppression enabled.
+
+Scripts also receive the last 10 messages of the channel (oldest first): author id, author display name, whether the author is a bot, content truncated to 2,000 characters, and an ISO timestamp. This is the same history anyone who can run `/ping` there can already scroll, and it is best-effort — if the bot lacks Read Message History, or the Message Content intent is off, scripts see an empty list or empty content rather than an error. Message content never affects who can be pinged; recipients are still checked against the eligible member snapshot.
 
 Members are fetched using paginated REST requests before selection (avoiding the Gateway full-member-request rate limit); a partial member cache is not used as the audience. A preview lasts five minutes and holds the exact selected IDs. Sending rechecks permissions and removes recipients who left or lost channel access; it never adds new matches. A preview can be used once, only by its author, in its original channel. Creating a new preview replaces the author's previous preview. Restarting the bot expires all previews.
 
@@ -78,11 +85,12 @@ Register it in the map in `src/languages/index.ts` and expose a command/editor c
 
 ## Execution bounds
 
-Lua runs in a fresh worker with an empty environment and no JavaScript object proxies. One narrow host callback resolves a member name to an ID using the shared resolver in `src/members.ts`; it has no Discord client, filesystem, or network access. User code receives an explicit Lua environment: no `io`, `os`, `package`, `require`, `debug`, `load`, or filesystem/network APIs. Loading source uses Lua's text-only mode.
+Lua runs in a fresh worker with an empty environment and no JavaScript object proxies. One narrow host callback resolves a member name to an ID using the shared resolver in `src/members.ts`; it has no Discord client, filesystem, or network access. User code receives an explicit Lua environment: no `io`, `os`, `package`, `require`, `debug`, `load`, or filesystem/network APIs. Unknown globals go through one metamethod that resolves a bare name to a role or member using that same callback, and evaluates to `nil` when nothing matches, so a typo still fails as a nil value. Loading source uses Lua's text-only mode.
 
 - Source: 16,000 UTF-8 bytes (Discord's editor/option is additionally capped at 4,000 characters).
 - Lua execution: 2 seconds, enforced by terminating the worker; runtime startup: 10 seconds.
 - Lua allocations: 16 MiB; worker JavaScript old-generation heap: 64 MiB. These are not a total process RSS limit.
+- Context: the last 10 channel messages, each truncated to 2,000 characters.
 - Output: at most 5,000 IDs, a nonempty message of at most 1,500 UTF-16 code units.
 - At most four concurrent preparations, one per caller.
 

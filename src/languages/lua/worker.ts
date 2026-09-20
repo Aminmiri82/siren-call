@@ -1,13 +1,14 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import { readFileSync } from 'node:fs';
 import { LuaFactory, LuaLibraries, LuaMultiReturn } from 'wasmoon';
-import { resolveMember } from '../../members.js';
+import { AmbiguousMemberError, resolveMember } from '../../members.js';
 import { limits } from '../../selection.js';
 import type { CompileContext } from '../../selection.js';
 
 // Encode snapshots as plain Lua data; no JS object proxies enter Lua.
 function literal(value: unknown): string {
   if (value === null) return 'nil';
+  if (typeof value === 'boolean') return String(value);
   if (typeof value === 'number' && Number.isInteger(value)) return String(value);
   if (typeof value === 'string') {
     return (
@@ -45,13 +46,17 @@ try {
     LuaLibraries.UTF8,
   ];
   for (const library of allowed) engine.global.loadLibrary(library);
-  // The only host callback: a string in, an ID or user-facing error out.
+  // The only host callback: a string in, an ID or a user-facing error and its kind out.
   engine.global.set('resolve_member', (reference: string) => {
     const values = new LuaMultiReturn();
     try {
-      values.push(resolveMember(reference, context), undefined);
+      values.push(resolveMember(reference, context), undefined, undefined);
     } catch (error) {
-      values.push(undefined, error instanceof Error ? error.message : 'Member lookup failed.');
+      values.push(
+        undefined,
+        error instanceof Error ? error.message : 'Member lookup failed.',
+        error instanceof AmbiguousMemberError ? 'ambiguous' : 'unknown',
+      );
     }
     return values;
   });
