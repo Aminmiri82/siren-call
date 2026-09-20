@@ -1,0 +1,3 @@
+# Select established members outside the two class roles.
+LET audience = @everyone - (@L1 + @L2) - JOINED_AFTER("2026-09-18")
+PING audience SAYING "Class is cancelled"

@@ -1,6 +1,18 @@
 # Siren Call
 
-A Discord bot for doing arithmetic on pings, using Lua.
+A Discord bot for doing arithmetic on pings, using **Lua** or **Sing**.
+
+Sing is a purpose-built language for selecting recipients by their server names:
+
+```text
+PING @Teachers - @John Doe SAYING "Class is cancelled"
+```
+
+Use `/ping language:Sing` to open its editor, or supply a short `script` directly.
+The adapter ID is `sing`. Use `@everyone` for all eligible members and `@here` for active
+members (online or Do Not Disturb; excludes idle/offline/invisible). Keywords and built-ins are case-insensitive; names may contain spaces and accents.
+See the [Sing language reference](docs/sing.md) for operators, quoted names, variables,
+control flow, built-ins, diagnostics, and limits. Lua remains the default for existing commands:
 
 ```lua
 return {
@@ -13,7 +25,7 @@ A bare name that is a valid Lua identifier resolves to the role or member it nam
 above can also be written `everyone() - (L1 + L2) - joined_after("2026-09-18")`. `caller` is the
 person who ran the command.
 
-`/ping` opens a Lua editor. Submit a script to get a private recipient/permission preview, then choose **Send ping** or **Cancel**. You can also put short scripts directly in `/ping script:...`.
+`/ping` opens the default Lua editor; `/ping language:Sing` opens the Sing editor. Submit a script to get a private recipient/permission preview, then choose **Send ping** or **Cancel**. You can also put short scripts directly in `/ping script:...`.
 
 ## Run locally
 
@@ -31,7 +43,7 @@ If `.env` already exists, edit it instead of copying over it. `.env` and `.env.*
 
 The default application is `1550468456678170684`, and commands are registered only in test server `1422967166088773664`. Override these with `DISCORD_APPLICATION_ID` and `DISCORD_GUILD_ID`.
 
-In the [Developer Portal](https://discord.com/developers/applications/1550468456678170684/bot), enable **Server Members Intent** and save. Enable **Message Content Intent** as well if you want scripts to read the recent-message context; without it Discord returns those messages with empty `content`, and everything else still works. The Presence intent is not needed. This bot uses a Gateway connection, so it needs no public web server, interactions endpoint, or public-key configuration.
+In the [Developer Portal](https://discord.com/developers/applications/1550468456678170684/bot), enable **Server Members Intent** and save. Enable **Message Content Intent** as well if you want scripts to read the recent-message context; without it Discord returns those messages with empty `content`, and everything else still works. Enable **Presence Intent** as well for Sing’s `@here` selection; the bot now requests it at login. This bot uses a Gateway connection, so it needs no public web server, interactions endpoint, or public-key configuration.
 
 [Install SirenCall in the test server](https://discord.com/oauth2/authorize?client_id=1550468456678170684&scope=bot%20applications.commands&permissions=19456&guild_id=1422967166088773664&disable_guild_select=true). Requested permissions: View Channels, Send Messages, Embed Links. No Administrator, Manage Roles, or Mention Everyone permission for the bot.
 
@@ -51,7 +63,7 @@ Members are fetched using paginated REST requests before selection (avoiding the
 
 Messages are split at 2,000 characters / 100 explicitly allowed user mentions, repeating the message text in each batch. Each selected ID occurs in one batch. On delivery failure the bot reports confirmed progress and does not retry the whole audience; an ambiguous failed network request may still have reached Discord. Permission and membership changes during delivery cannot be made atomic with Discord.
 
-Normal text and announcement channels are supported. Threads, voice-channel chats, DMs, repeated ping counts, saved scripts, and a custom language are not implemented.
+Normal text and announcement channels are supported. Threads, voice-channel chats, DMs, repeated ping counts, and saved scripts are not implemented.
 
 ## Architecture
 
@@ -66,6 +78,7 @@ Discord command → SelectionLanguage.compile(source, context)
 - `src/members.ts`: language-independent member-name and mention resolution.
 - `src/languages/index.ts`: the adapter registry.
 - `src/languages/lua/`: Wasmoon Lua adapter and isolated execution worker.
+- `src/languages/sing/`: Sing lexer, parser, interpreter, structured diagnostics, and isolated worker.
 - `src/discord/context.ts`: member and role fetching, and Discord-to-snapshot conversion.
 - `src/discord/ui.ts`: the editor modal, buttons, and preview rendering.
 - `src/discord/ping.ts`: the `/ping` flow, from compile through preview to rechecked delivery.
@@ -81,9 +94,17 @@ interface SelectionLanguage {
 }
 ```
 
-Register it in the map in `src/languages/index.ts` and expose a command/editor choice; the editor modal already carries the language id in its `customId`. The host always validates the result. Adapters get plain snapshots, never the Discord client or credentials. No query AST, plugin loader, or database is needed. The shared audience tests take adapter-specific source strings and assert language-independent behavior.
+Register it in the map in `src/languages/index.ts` and expose a command/editor choice; the editor modal already carries the language id in its `customId`. The host always validates the result. Adapters get plain snapshots, never the Discord client or credentials. Sing keeps its syntax tree internal to its adapter; the host needs no language-specific AST, plugin loader, or database. The shared audience tests take adapter-specific source strings and assert language-independent behavior.
 
 ## Execution bounds
+
+Sing runs in a fresh worker with an empty environment and a 64 MiB JavaScript old-generation
+heap limit. It interprets a closed syntax tree, never JavaScript or Lua source, and exposes only
+plain snapshot fields and documented built-ins. It shares the source, startup, execution, and
+output limits below. Additional Sing bounds are 1,000,000 evaluation work units (including set
+and string work), 100 levels of parser/evaluator nesting, and 16,000 UTF-16 code units per
+intermediate string. Worker limits are not a total process RSS limit. See the
+[Sing reference](docs/sing.md) for details.
 
 Lua runs in a fresh worker with an empty environment and no JavaScript object proxies. One narrow host callback resolves a member name to an ID using the shared resolver in `src/members.ts`; it has no Discord client, filesystem, or network access. User code receives an explicit Lua environment: no `io`, `os`, `package`, `require`, `debug`, `load`, or filesystem/network APIs. Unknown globals go through one metamethod that resolves a bare name to a role or member using that same callback, and evaluates to `nil` when nothing matches, so a typo still fails as a nil value. Loading source uses Lua's text-only mode.
 
@@ -102,10 +123,15 @@ Lua output must be a dense list of IDs. The host checks membership in the eligib
 pnpm run check   # lint, format check, typecheck, tests
 pnpm test
 pnpm run preview examples/class.lua examples/context.json
+pnpm run preview examples/class.sing examples/context.json sing
 ```
 
-The small test suite covers recipient semantics, arbitrary Lua control flow, runaway/memory failures, host isolation, full-audience authorization, notification batching, and partial delivery. Future language adapters can reuse `selectionContract` with their own scenario source strings. Tests run against the built output in `dist/`, because the Lua adapter resolves its worker and `runtime.lua` relative to its own compiled location; the Vitest global setup builds first, so a bare `vitest` cannot test stale output. CI runs `pnpm run check` without a bot token. `AGENTS.md` covers the conventions for changing this code.
+The test suite covers both language adapters, Sing name matching and diagnostics, control flow, runaway/memory failures, host isolation, full-audience authorization, notification batching, and partial delivery. Future language adapters can reuse `selectionContract` with their own scenario source strings. Tests run against the built output in `dist/`, because the Lua adapter resolves its worker and `runtime.lua` relative to its own compiled location; the Vitest global setup builds first, so a bare `vitest` cannot test stale output. CI runs `pnpm run check` without a bot token. `AGENTS.md` covers the conventions for changing this code.
 
 For a live smoke test, run `/ping` in the test server and use the default `member(caller_id)` script. Check the private preview, send, and confirm the bot mentions only you. Also try Cancel and a script with `everyone()` using an account without Mention Everyone; it should preview as blocked. Automated local tests do not prove actual notification delivery.
 
-Live validation on 2026-09-18: installed in the test server, registered `/ping`, opened the Lua modal, previewed a self-only selection, and sent one message mentioning only the invoking user. Verified the visible message and Discord API response (`mention_everyone: false`). The first live send revealed a Gateway member-fetch rate limit; switching to REST pagination resolved it. Full-audience denial is covered by the shared policy test, not a second live user account.
+Sing is covered by local automated tests; live Discord behavior must be checked after registering
+the updated command. A Sing smoke test is `/ping language:Sing` with the default
+`PING CALLER SAYING "The siren calls!"` script, followed by preview, Send ping, and Cancel.
+
+Live Lua validation on 2026-09-18: installed in the test server, registered `/ping`, opened the Lua modal, previewed a self-only selection, and sent one message mentioning only the invoking user. Verified the visible message and Discord API response (`mention_everyone: false`). The first live send revealed a Gateway member-fetch rate limit; switching to REST pagination resolved it. Full-audience denial is covered by the shared policy test, not a second live user account.

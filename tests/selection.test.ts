@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { SingSelectionLanguage } from '../dist/languages/sing/index.js';
 import { LuaSelectionLanguage } from '../dist/languages/lua/index.js';
 import { batches, deliver, limits, permissionProblem, validatePlan } from '../dist/selection.js';
 import type { CompileContext, SelectionLanguage } from '../dist/selection.js';
@@ -110,6 +111,29 @@ selectionContract(lua, {
     )
     .concat('return { recipients = everyone() - raphe22, message = "Hello" }'),
   ambiguous: 'return { recipients = member("Both roles"), message = "Hello" }',
+});
+
+selectionContract(new SingSelectionLanguage(), {
+  exclude: 'PING @everyone - (@L1 + @L2) - JOINED_AFTER("2026-09-18") SAYING "Class is cancelled"',
+  overlap: 'PING @L1 OR @L2 SAYING "Hello"',
+  empty: 'PING @everyone - @everyone SAYING "Hello"',
+  invalid: 'PING MEMBER("999") SAYING "Hello"',
+  named: [
+    '103',
+    '<@103>',
+    '<@!103>',
+    'raphe22',
+    '@raphe22',
+    'chèvre',
+    'chévre',
+    'chevre',
+    'CHEVRE',
+    'che\u0300vre',
+    'Raphaël',
+  ]
+    .map(reference => `PING @everyone - MEMBER(${JSON.stringify(reference)}) SAYING "Hello"`)
+    .concat('PING @everyone - @chèvre SAYING "Hello"'),
+  ambiguous: 'PING @Both roles SAYING "Hello"',
 });
 
 it('allows Lua loops and functions but terminates runaway scripts and stays usable', async () => {

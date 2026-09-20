@@ -1,4 +1,4 @@
-import { ChannelType, Collection, PermissionFlagsBits } from 'discord.js';
+import { ChannelType, Collection, GatewayIntentBits, PermissionFlagsBits } from 'discord.js';
 import type {
   ButtonInteraction,
   ChatInputCommandInteraction,
@@ -63,9 +63,11 @@ export function toCompileContext(
   messages: ChannelMessage[],
   channel: GuildTextBasedChannel,
   callerId: string,
+  presenceAvailable = false,
 ): CompileContext {
   return {
     callerId,
+    presenceAvailable,
     messages,
     members: [...members]
       .filter(
@@ -79,6 +81,11 @@ export function toCompileContext(
         globalName: member.user.globalName,
         roleIds: [...member.roles.cache.keys()],
         joinedAt: member.joinedAt?.toISOString() ?? null,
+        presence: presenceAvailable
+          ? member.presence?.status === 'invisible'
+            ? 'offline'
+            : (member.presence?.status ?? 'offline')
+          : null,
       })),
     roles: [...roles].map(role => ({ id: role.id, name: role.name })),
   };
@@ -124,6 +131,11 @@ export async function snapshot(interaction: Interaction): Promise<ChannelSnapsho
       messages,
       channel,
       caller.id,
+      // Discord's initial presence list is incomplete above 75,000 members.
+      guild.available &&
+        guild.memberCount <= 75_000 &&
+        interaction.client.isReady() &&
+        interaction.client.options.intents.has(GatewayIntentBits.GuildPresences),
     ),
     channel,
     canMentionEveryone: callerPermissions.has(PermissionFlagsBits.MentionEveryone),

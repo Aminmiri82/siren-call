@@ -7,6 +7,7 @@ import {
   TextInputStyle,
 } from 'discord.js';
 import type { InteractionEditReplyOptions } from 'discord.js';
+import { language } from '../languages/index.js';
 import { batches } from '../selection.js';
 import type { CompileContext, PingPlan } from '../selection.js';
 
@@ -17,16 +18,23 @@ export function quantity(count: number, singular: string, plural = singular + 's
 }
 
 export function scriptModal(languageId: string) {
+  language(languageId);
+  const sing = languageId === 'sing';
+  const label = sing ? 'Sing' : 'Lua';
   const input = new TextInputBuilder()
     .setCustomId('script')
-    .setLabel('Lua script')
+    .setLabel(`${label} script`)
     .setStyle(TextInputStyle.Paragraph)
     .setRequired(true)
     .setMaxLength(4000)
-    .setValue('return {\n  recipients = member(caller_id),\n  message = "The siren calls!"\n}');
+    .setValue(
+      sing
+        ? 'PING CALLER SAYING "The siren calls!"'
+        : 'return {\n  recipients = member(caller_id),\n  message = "The siren calls!"\n}',
+    );
   return new ModalBuilder()
     .setCustomId(`ping:${languageId}`)
-    .setTitle('Siren Call · Lua')
+    .setTitle(`Siren Call · ${label}`)
     .addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input));
 }
 

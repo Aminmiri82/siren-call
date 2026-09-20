@@ -5,7 +5,7 @@ import type { CompileContext } from './selection.js';
 
 const [script, fixture, languageId = defaultLanguageId] = process.argv.slice(2);
 if (!script || !fixture) {
-  throw new Error('Usage: pnpm run preview <script.lua> <context.json> [language]');
+  throw new Error('Usage: pnpm run preview <script> <context.json> [language]');
 }
 // Hand-written fixtures predate parts of the context; adapters may assume every field is present.
 const context: CompileContext = { messages: [], ...JSON.parse(readFileSync(fixture, 'utf8')) };

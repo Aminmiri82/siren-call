@@ -5,7 +5,11 @@ import { expirePreviews, handleButton, preview } from './ping.js';
 import { scriptModal } from './ui.js';
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildPresences,
+  ],
   allowedMentions: { parse: [], repliedUser: false },
 });
 
@@ -20,8 +24,9 @@ client.on(Events.InteractionCreate, async interaction => {
   try {
     if (interaction.isChatInputCommand() && interaction.commandName === 'ping') {
       const source = interaction.options.getString('script');
-      if (source) await preview(interaction, defaultLanguageId, source);
-      else await interaction.showModal(scriptModal(defaultLanguageId));
+      const languageId = interaction.options.getString('language') ?? defaultLanguageId;
+      if (source) await preview(interaction, languageId, source);
+      else await interaction.showModal(scriptModal(languageId));
     } else if (interaction.isModalSubmit() && interaction.customId.startsWith('ping:')) {
       const languageId = interaction.customId.slice('ping:'.length);
       await preview(interaction, languageId, interaction.fields.getTextInputValue('script'));

@@ -1,7 +1,7 @@
 {
   "name": "siren-call",
   "version": "1.0.0",
-  "description": "Lua-powered Discord audience selection",
+  "description": "Lua and Sing Discord audience selection",
   "scripts": {
     "build": "tsc && cp src/languages/lua/runtime.lua dist/languages/lua/runtime.lua",
     "start": "node --env-file-if-exists=.env dist/discord/bot.js",

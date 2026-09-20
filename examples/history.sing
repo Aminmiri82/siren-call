@@ -1,0 +1,9 @@
+LET audience = NONE
+FOR person IN MEMBERS DO
+  FOR message IN MESSAGES DO
+    IF message.authorId == person.id AND NOT message.bot THEN
+      audience = audience + MEMBER(person.id)
+    END
+  END
+END
+PING audience SAYING "Following up on the recent conversation"

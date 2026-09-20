@@ -11,6 +11,7 @@ export interface Member {
   globalName?: string | null;
   roleIds: string[];
   joinedAt: string | null;
+  presence?: 'online' | 'idle' | 'dnd' | 'offline' | null;
 }
 
 /** A message already visible in the channel to anyone who can run `/ping` there. */
@@ -27,6 +28,8 @@ export interface CompileContext {
   members: Member[];
   roles: { id: string; name: string }[];
   callerId: string;
+  /** False or absent means an online-only selection cannot be evaluated reliably. */
+  presenceAvailable?: boolean;
   /** Oldest first, so an adapter can hand it to something that expects a transcript. */
   messages: ChannelMessage[];
 }
@@ -45,6 +48,10 @@ export const limits = {
   contextMessages: 10,
   /** Discord's own non-Nitro message cap, so this truncates almost nothing in practice. */
   contextMessageChars: 2_000,
+  singSteps: 1_000_000,
+  singDepth: 100,
+  singStringLength: 16_000,
+  singHeapMb: 64,
   luaMemoryBytes: 16 * 1024 * 1024,
   executionMs: 2_000,
   startupMs: 10_000,

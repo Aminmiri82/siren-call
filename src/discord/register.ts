@@ -3,13 +3,17 @@ import { applicationId, guildId, token } from './config.js';
 
 const command = new SlashCommandBuilder()
   .setName('ping')
-  .setDescription('Select recipients with Lua, preview, then send.')
+  .setDescription('Select recipients with Lua or Sing, preview, then send.')
+  .addStringOption(option =>
+    option
+      .setName('language')
+      .setDescription('Selection language (default: Lua).')
+      .addChoices({ name: 'Lua', value: 'lua' }, { name: 'Sing', value: 'sing' }),
+  )
   .addStringOption(option =>
     option
       .setName('script')
-      .setDescription(
-        'Lua returning { recipients = ..., message = "..." }; omit to open an editor.',
-      )
+      .setDescription('A script in the selected language; omit to open an editor.')
       .setMaxLength(4000),
   );
 // Upsert only our command; never replace other application commands.

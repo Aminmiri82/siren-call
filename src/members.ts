@@ -6,14 +6,19 @@ const normalize = (name: string) => name.normalize('NFD').replace(/\p{M}/gu, '')
 export class AmbiguousMemberError extends Error {}
 
 /** Shared by language adapters; never guess between matching people. */
-export function resolveMember(reference: string, context: CompileContext): string {
+export function resolveMember(
+  reference: string,
+  context: CompileContext,
+  kind: 'reference' | 'name' = 'reference',
+): string {
   const id =
     reference.match(/^<@!?(\d+)>$/)?.[1] ?? (/^\d+$/.test(reference) ? reference : undefined);
-  if (id) {
+  if (id && kind === 'reference') {
     if (context.members.some(member => member.id === id)) return id;
     throw new Error(`No member matches “${reference}” in this channel.`);
   }
-  const name = normalize(reference.replace(/^@/, ''));
+  // Sing's @ syntax already delimits a name; numeric and @-prefixed names remain literal.
+  const name = normalize(kind === 'name' ? reference : reference.replace(/^@/, ''));
   const matches = context.members.filter(member =>
     [member.name, member.username, member.globalName].some(
       alias => alias && normalize(alias) === name,

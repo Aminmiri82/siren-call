@@ -1,8 +1,12 @@
+import { SingSelectionLanguage } from './sing/index.js';
 import { LuaSelectionLanguage } from './lua/index.js';
 import type { SelectionLanguage } from '../selection.js';
 
-/** Add an adapter here and the bot, the editor modal, and `pnpm run preview` all pick it up. */
-export const languages = new Map<string, SelectionLanguage>([['lua', new LuaSelectionLanguage()]]);
+/** Command choices and editor defaults live in the Discord layer; the CLI uses this registry. */
+export const languages = new Map<string, SelectionLanguage>([
+  ['lua', new LuaSelectionLanguage()],
+  ['sing', new SingSelectionLanguage()],
+]);
 
 export const defaultLanguageId = 'lua';
 
