@@ -73,12 +73,12 @@ assert(fn, problem)
 local result = fn()
 assert(type(result) == 'table', 'Return { recipients = ..., message = "..." }')
 assert(type(result.message) == 'string', 'message must be a string')
-assert(#result.message <= 6000, 'Message is too long')
+assert(#result.message <= limits.messageBytes, 'Message is too long')
 assert(type(result.recipients) == 'table', 'recipients must be a list of member IDs')
 local count = 0
 for key, id in pairs(result.recipients) do
   count = count + 1
-  assert(count <= 5000, 'Too many recipients (maximum 5000)')
+  assert(count <= limits.recipients, 'Too many recipients (maximum '..limits.recipients..')')
   assert(type(key) == 'number' and key >= 1 and key % 1 == 0, 'recipients must be a dense list')
   assert(type(id) == 'string' and id:match('^%d+$'), 'Recipient IDs must be strings of digits')
 end

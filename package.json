@@ -7,8 +7,11 @@
     "start": "node --env-file-if-exists=.env dist/discord/bot.js",
     "dev": "pnpm run build && pnpm start",
     "register": "pnpm run build && node --env-file-if-exists=.env dist/discord/register.js",
-    "test": "pnpm run build && vitest run",
-    "check": "pnpm test",
+    "typecheck": "pnpm run build && tsc -p tsconfig.test.json",
+    "lint": "oxlint && prettier --check .",
+    "format": "prettier --write .",
+    "test": "vitest run",
+    "check": "pnpm run lint && pnpm run typecheck && pnpm test",
     "preview": "pnpm run build && node dist/preview.js"
   },
   "repository": {
@@ -29,6 +32,8 @@
   },
   "devDependencies": {
     "@types/node": "^26.6.1",
+    "oxlint": "^1.83.0",
+    "prettier": "^3.9.8",
     "typescript": "^7.0.2",
     "vitest": "^5.0.1"
   },

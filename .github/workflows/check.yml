@@ -1,7 +1,9 @@
 name: Check
 on: [push, pull_request]
+permissions:
+  contents: read
 jobs:
-  test:
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -11,4 +13,4 @@ jobs:
           node-version: '24'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm test
+      - run: pnpm run check

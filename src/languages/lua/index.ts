@@ -9,7 +9,9 @@ export class LuaSelectionLanguage implements SelectionLanguage {
     return new Promise((resolve, reject) => {
       // An empty environment prevents the worker inheriting the bot token.
       const worker = new Worker(new URL('./worker.js', import.meta.url), {
-        workerData: { source, context }, env: {}, execArgv: [],
+        workerData: { source, context },
+        env: {},
+        execArgv: [],
         resourceLimits: { maxOldGenerationSizeMb: 64, stackSizeMb: 4 },
       });
       let settled = false;
@@ -19,17 +21,26 @@ export class LuaSelectionLanguage implements SelectionLanguage {
         settled = true;
         clearTimeout(timer);
         void worker.terminate();
-        if (error) reject(error); else resolve(plan!);
+        if (error) reject(error);
+        else resolve(plan!);
       };
-      timer = setTimeout(() => finish(new Error('Lua runtime failed to start in time.')), limits.startupMs);
-      worker.on('message', (event) => {
+      timer = setTimeout(
+        () => finish(new Error('Lua runtime failed to start in time.')),
+        limits.startupMs,
+      );
+      worker.on('message', event => {
         if (event.ready) {
           clearTimeout(timer);
-          timer = setTimeout(() => finish(new Error('Lua exceeded the 2-second execution limit.')), limits.executionMs);
+          timer = setTimeout(
+            () => finish(new Error('Lua exceeded the 2-second execution limit.')),
+            limits.executionMs,
+          );
         } else if (event.error) finish(new Error(event.error));
         else finish(undefined, event.plan);
       });
-      worker.on('error', error => finish(error instanceof Error ? error : new Error('Lua worker failed.')));
+      worker.on('error', error =>
+        finish(error instanceof Error ? error : new Error('Lua worker failed.')),
+      );
       worker.on('exit', code => finish(new Error(`Lua worker exited without a result (${code}).`)));
     });
   }

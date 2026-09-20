@@ -32,48 +32,6 @@ In the [Developer Portal](https://discord.com/developers/applications/1550468456
 [Install SirenCall in the test server](https://discord.com/oauth2/authorize?client_id=1550468456678170684&scope=bot%20applications.commands&permissions=19456&guild_id=1422967166088773664&disable_guild_select=true). Requested permissions: View Channels, Send Messages, Embed Links. No Administrator, Manage Roles, or Mention Everyone permission for the bot.
 
 The process must stay running for the bot to respond. `pnpm start` runs the built output; `pnpm run dev` rebuilds first. Command registration upserts only `/ping`, leaving other commands alone.
-
-## Lua API
-
-Scripts return `{ recipients = <list of ID strings>, message = <string> }`. IDs stay strings so Discord snowflakes never lose precision.
-
-| API | Meaning |
-| --- | --- |
-| `everyone()` | Human members who can view this channel |
-| `role("L1")` | Eligible members with this role; use the role ID if names collide |
-| `member("@raphe22")`, `member("raphe22")` | One eligible member by username, server display name, or global display name |
-| `member("<@123...>")`, `member("123...")` | One eligible member by Discord mention or ID |
-| `member(caller_id)` | Yourself |
-| `joined_after("2026-09-18")` | Joined strictly after midnight UTC on this date |
-| `select(function(m) return ... end)` | Select by a Lua predicate |
-| `a + b`, `union(a,b)` | Union, without duplicates |
-| `a - b`, `difference(a,b)` | Difference |
-| `a * b`, `intersection(a,b)` | Intersection |
-| `members` | Array of eligible member snapshots |
-
-Member fields: `id`, `name` (server display name), `username`, `globalName` (or `nil`), `roleIds`, `joinedAt` (ISO UTC string, or `nil` if unknown). Unknown join dates do not match `joined_after`. Role names are exact and case-sensitive. The `@everyone` role can also be selected by the guild ID.
-
-Member names match across server nicknames, usernames, and global display names. Case and accents are ignored (`chèvre`, `chévre`, and `CHEVRE` match); spaces and the rest of the name must still match. Prefixing a name with `@` is optional. If multiple eligible members match any of these names, the bot asks for a mention or ID rather than guessing. A real Discord mention (`<@ID>` or `<@!ID>`) always resolves by ID. All references must be quoted Lua strings: bare `@raphe22` is not Lua syntax. The modal is a plain text editor, so typing `@name` there performs name lookup rather than opening Discord's mention picker.
-
-```lua
-return {
-  recipients = everyone() - member("@raphe22"),
-  message = "Class is cancelled"
-}
-```
-
-Use parentheses when mixing operators: Lua gives `*` higher precedence than `+` and `-`. Ordinary Lua variables, loops, functions, and the `math`, `string`, `table`, and `utf8` libraries are available.
-
-```lua
-local selected = {}
-for _, person in ipairs(members) do
-  if person.id == caller_id then
-    selected[#selected + 1] = person.id
-  end
-end
-return { recipients = selected, message = "The siren calls!" }
-```
-
 ## Permissions and preview semantics
 
 The bot checks the caller's effective channel permissions, including role/channel overwrites, and the bot's ability to send there. A selection covering **all eligible humans** requires the caller's **Mention Everyone** permission. This is checked on the final recipient set, so spelling out all IDs does not bypass it. Smaller selections do not require Mention Everyone, and role mentionability is intentionally not checked.
@@ -97,10 +55,14 @@ Discord command → SelectionLanguage.compile(source, context)
                 → recheck + batched delivery
 ```
 
-- `src/selection.ts`: plain types, output validation, permission policy, batching, and delivery outcomes.
+- `src/selection.ts`: plain types, shared limits, output validation, permission policy, batching, and delivery outcomes.
 - `src/members.ts`: language-independent member-name and mention resolution.
+- `src/languages/index.ts`: the adapter registry.
 - `src/languages/lua/`: Wasmoon Lua adapter and isolated execution worker.
-- `src/discord/`: Discord data conversion, interaction UI, and configuration.
+- `src/discord/context.ts`: member and role fetching, and Discord-to-snapshot conversion.
+- `src/discord/ui.ts`: the editor modal, buttons, and preview rendering.
+- `src/discord/ping.ts`: the `/ping` flow, from compile through preview to rechecked delivery.
+- `src/discord/bot.ts`: client wiring and interaction routing.
 - `src/preview.ts`: run the same language contract without Discord.
 
 A new language implements `SelectionLanguage`:
@@ -112,7 +74,7 @@ interface SelectionLanguage {
 }
 ```
 
-Register its implementation in the language map and expose a command/editor choice. The host always validates the result. Adapters get plain snapshots, never the Discord client or credentials. No query AST, plugin loader, or database is needed. The shared audience tests take adapter-specific source strings and assert language-independent behavior.
+Register it in the map in `src/languages/index.ts` and expose a command/editor choice; the editor modal already carries the language id in its `customId`. The host always validates the result. Adapters get plain snapshots, never the Discord client or credentials. No query AST, plugin loader, or database is needed. The shared audience tests take adapter-specific source strings and assert language-independent behavior.
 
 ## Execution bounds
 
@@ -129,11 +91,12 @@ Lua output must be a dense list of IDs. The host checks membership in the eligib
 ## Check behavior
 
 ```sh
+pnpm run check   # lint, format check, typecheck, tests
 pnpm test
 pnpm run preview examples/class.lua examples/context.json
 ```
 
-The small test suite covers recipient semantics, arbitrary Lua control flow, runaway/memory failures, host isolation, full-audience authorization, notification batching, and partial delivery. Future language adapters can reuse `selectionContract` with their own scenario source strings. CI runs the same build and tests without a bot token.
+The small test suite covers recipient semantics, arbitrary Lua control flow, runaway/memory failures, host isolation, full-audience authorization, notification batching, and partial delivery. Future language adapters can reuse `selectionContract` with their own scenario source strings. Tests run against the built output in `dist/`, because the Lua adapter resolves its worker and `runtime.lua` relative to its own compiled location; the Vitest global setup builds first, so a bare `vitest` cannot test stale output. CI runs `pnpm run check` without a bot token. `AGENTS.md` covers the conventions for changing this code.
 
 For a live smoke test, run `/ping` in the test server and use the default `member(caller_id)` script. Check the private preview, send, and confirm the bot mentions only you. Also try Cancel and a script with `everyone()` using an account without Mention Everyone; it should preview as blocked. Automated local tests do not prove actual notification delivery.
 
