@@ -52,6 +52,7 @@ export const limits = {
   singDepth: 100,
   singStringLength: 16_000,
   singIntegerDigits: 16_000,
+  singCollectionItems: 16_000,
   singHeapMb: 64,
   luaMemoryBytes: 16 * 1024 * 1024,
   executionMs: 2_000,
@@ -61,6 +62,18 @@ export const limits = {
 
 const DISCORD_MESSAGE_LENGTH = 2_000;
 const DISCORD_MENTIONS_PER_MESSAGE = 100;
+
+/** Standalone compiler work is larger than a Discord selection; never used by the bot. */
+export const compilerLimits = {
+  ...limits,
+  sourceBytes: 1_000_000,
+  singSteps: 10_000_000_000,
+  singDepth: 500,
+  singStringLength: 16_000_000,
+  singCollectionItems: 100_000,
+  singHeapMb: 256,
+  executionMs: 60_000,
+} as const;
 
 /** Validate every adapter at the application boundary, not just Lua. */
 export function validatePlan(value: unknown, context: CompileContext): PingPlan {

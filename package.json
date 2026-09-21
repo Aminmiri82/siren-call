@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Lua and Sing Discord audience selection",
   "scripts": {
-    "build": "tsc && cp src/languages/lua/runtime.lua dist/languages/lua/runtime.lua",
+    "build": "tsc && cp src/languages/lua/runtime.lua dist/languages/lua/runtime.lua && cp compiler/compiler.sing dist/compiler/compiler.sing",
     "start": "node --env-file-if-exists=.env dist/discord/bot.js",
     "dev": "pnpm run build && pnpm start",
     "register": "pnpm run build && node --env-file-if-exists=.env dist/discord/register.js",
@@ -13,7 +13,9 @@
     "test": "vitest run",
     "check": "pnpm run lint && pnpm run typecheck && pnpm test",
     "sing": "pnpm run build && node dist/sing-cli.js",
-    "preview": "pnpm run build && node dist/preview.js"
+    "preview": "pnpm run build && node dist/preview.js",
+    "sing:compile": "pnpm run build && node dist/compiler/cli.js",
+    "sing:bootstrap": "pnpm run build && node dist/compiler/bootstrap-cli.js"
   },
   "repository": {
     "type": "git",

@@ -1,0 +1,498 @@
+# Sing's standalone compiler. SOURCE and RUNTIME are scalar bindings supplied by the runner.
+# Identifiers are emitted as quoted scope keys, never interpolated as JavaScript identifiers.
+LET keywords = "|RETURN|PING|SAYING|LET|IF|THEN|ELSE|END|WHILE|DO|FOR|IN|FUNC|TYPE|AND|OR|XOR|NOT|TRUE|FALSE|NULL|NONE|CALLER|MEMBERS|MESSAGES|COUNT|MEMBER|ROLE|JOINED_AFTER|CONTAINS|TEXT|APPEND|LENGTH|SLICE|INT|CHAR_CODE|CHAR|ERROR|";
+LET callableNames = "|COUNT|CONTAINS|TEXT|APPEND|LENGTH|SLICE|INT|CHAR_CODE|CHAR|ERROR|";
+LET unsupported = "|PING|SAYING|NONE|CALLER|MEMBERS|MESSAGES|MEMBER|ROLE|JOINED_AFTER|";
+LET cursor = 0;
+LET tokens = [];
+LET at = 0;
+LET grouping = 0;
+
+FUNC upper(word) {
+  LET result = "";
+  LET i = 0;
+  WHILE i < LENGTH(word) {
+    LET c = word[i];
+    LET n = CHAR_CODE(c);
+    IF n >= 97 AND n <= 122 { c = CHAR(n - 32); }
+    result = result + c;
+    i = i + 1;
+  }
+  RETURN result;
+}
+FUNC digit(c) { RETURN c >= "0" AND c <= "9"; }
+FUNC letter(c) {
+  RETURN (c >= "a" AND c <= "z") OR (c >= "A" AND c <= "Z") OR c == "_";
+}
+FUNC position(start, stop) { RETURN "[" + TEXT(start) + "," + TEXT(stop) + "]"; }
+FUNC hex4(n) {
+  LET result = "";
+  FOR place IN [4096, 256, 16, 1] {
+    LET d = 0;
+    WHILE n >= place { n = n - place; d = d + 1; }
+    result = result + "0123456789abcdef"[d];
+  }
+  RETURN result;
+}
+FUNC quote(value) {
+  LET result = "\"";
+  LET start = 0;
+  LET i = 0;
+  WHILE i < LENGTH(value) {
+    LET c = value[i];
+    LET n = CHAR_CODE(c);
+    IF c == "\"" OR c == "\\" OR n < 32 OR (n >= 55296 AND n <= 57343) {
+      result = result + SLICE(value, start, i);
+      IF c == "\"" OR c == "\\" { result = result + "\\" + c; }
+      ELSE { result = result + "\\u" + hex4(n); }
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  RETURN result + SLICE(value, start, i) + "\"";
+}
+FUNC problem(token, message) {
+  # The runner turns this private diagnostic envelope into a span in the input file.
+  ERROR("SING_COMPILER:" + TEXT(token.start) + ":" + message);
+}
+FUNC token(tag, value, start) {
+  RETURN {tag: tag, value: value, start: start, stop: cursor};
+}
+FUNC readString(start) {
+  cursor = cursor + 1;
+  LET value = "";
+  WHILE cursor < LENGTH(SOURCE) {
+    LET c = SOURCE[cursor];
+    cursor = cursor + 1;
+    IF c == "\"" { RETURN token("string", value, start); }
+    IF CHAR_CODE(c) < 32 { problem({start: start}, "Unescaped control character in string."); }
+    IF c == "\\" {
+      IF cursor >= LENGTH(SOURCE) { problem({start: start}, "Unclosed string escape."); }
+      c = SOURCE[cursor];
+      cursor = cursor + 1;
+      IF c == "u" {
+        LET valueCode = 0;
+        LET digits = 0;
+        WHILE digits < 4 {
+          IF cursor >= LENGTH(SOURCE) { problem({start: start}, "Incomplete Unicode escape."); }
+          LET h = upper(SOURCE[cursor]);
+          LET n = 0;
+          WHILE n < 16 AND "0123456789ABCDEF"[n] != h { n = n + 1; }
+          IF n == 16 { problem({start: cursor}, "Invalid Unicode escape."); }
+          valueCode = valueCode + valueCode;
+          valueCode = valueCode + valueCode;
+          valueCode = valueCode + valueCode;
+          valueCode = valueCode + valueCode + n;
+          cursor = cursor + 1;
+          digits = digits + 1;
+        }
+        c = CHAR(valueCode);
+      } ELSE {
+        IF NOT CONTAINS("\"\\/bfnrt", c) { problem({start: cursor - 1}, "Invalid string escape."); }
+        LET escapes = {"\"": "\"", "\\": "\\", "/": "/", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t"};
+        c = escapes[c];
+      }
+    }
+    value = value + c;
+  }
+  problem({start: start}, "Unclosed string.");
+}
+FUNC nextToken() {
+  LET skipping = TRUE;
+  WHILE skipping AND cursor < LENGTH(SOURCE) {
+    LET c = SOURCE[cursor];
+    IF CONTAINS(" \t\r\u000b\u000c\u00a0\ufeff\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000", c) {
+      cursor = cursor + 1;
+    } ELSE {
+      IF c == "#" {
+        WHILE cursor < LENGTH(SOURCE) AND SOURCE[cursor] != "\n" { cursor = cursor + 1; }
+      } ELSE { skipping = FALSE; }
+    }
+  }
+  LET start = cursor;
+  IF cursor == LENGTH(SOURCE) { RETURN token("eof", "", start); }
+  LET c = SOURCE[cursor];
+  IF c == "\"" { RETURN readString(start); }
+  IF c == "\n" OR c == ";" { cursor = cursor + 1; RETURN token("separator", c, start); }
+  IF letter(c) {
+    cursor = cursor + 1;
+    WHILE cursor < LENGTH(SOURCE) AND (letter(SOURCE[cursor]) OR digit(SOURCE[cursor])) {
+      cursor = cursor + 1;
+    }
+    LET word = SLICE(SOURCE, start, cursor);
+    LET capital = upper(word);
+    IF CONTAINS(keywords, "|" + capital + "|") { RETURN token(capital, word, start); }
+    RETURN token("identifier", word, start);
+  }
+  IF digit(c) {
+    cursor = cursor + 1;
+    WHILE cursor < LENGTH(SOURCE) AND digit(SOURCE[cursor]) { cursor = cursor + 1; }
+    IF (cursor + 1) < LENGTH(SOURCE) AND SOURCE[cursor] == "." AND digit(SOURCE[cursor + 1]) {
+      cursor = cursor + 1;
+      WHILE cursor < LENGTH(SOURCE) AND digit(SOURCE[cursor]) { cursor = cursor + 1; }
+    }
+    RETURN token("number", SLICE(SOURCE, start, cursor), start);
+  }
+  IF (cursor + 1) < LENGTH(SOURCE) {
+    LET pair = SLICE(SOURCE, cursor, cursor + 2);
+    IF pair == "==" OR pair == "!=" OR pair == "<=" OR pair == ">=" {
+      cursor = cursor + 2;
+      RETURN token(pair, pair, start);
+    }
+  }
+  IF CONTAINS("+-()=<>.,{}[]:", c) {
+    cursor = cursor + 1;
+    RETURN token(c, c, start);
+  }
+  IF c == "@" { problem({start: start}, "Discord selections are not supported by the standalone compiler."); }
+  problem({start: start}, "Unexpected character; this compiler supports ASCII identifiers.");
+}
+FUNC current() { RETURN tokens[at]; }
+FUNC is(tag) { RETURN current().tag == tag; }
+FUNC take() { LET item = current(); at = at + 1; RETURN item; }
+FUNC expect(tag) {
+  IF NOT is(tag) { problem(current(), "Expected " + tag + ", found " + current().tag + "."); }
+  RETURN take();
+}
+FUNC separators() { WHILE is("separator") { take(); } }
+FUNC soft() { IF grouping > 0 { separators(); } }
+FUNC fieldName() {
+  LET item = current();
+  IF item.tag != "identifier" AND item.tag != "string" { problem(item, "Expected field name or quoted string."); }
+  take();
+  RETURN item.value;
+}
+FUNC unique(names, name) {
+  FOR existing IN names {
+    IF existing == name { problem(current(), "Duplicate field or parameter name."); }
+  }
+  RETURN APPEND(names, name);
+}
+FUNC annotation() {
+  IF NOT is(":") { RETURN "undefined"; }
+  take();
+  RETURN parseType();
+}
+FUNC parseType() {
+  soft();
+  LET item = take();
+  LET code = "";
+  IF item.tag == "{" {
+    grouping = grouping + 1;
+    soft();
+    LET fields = "";
+    LET names = [];
+    LET more = NOT is("}");
+    WHILE more {
+      LET name = fieldName();
+      names = unique(names, name);
+      expect(":");
+      LET value = parseType();
+      fields = fields + "{name:" + quote(name) + ",type:" + value + "},";
+      soft();
+      IF is(",") { take(); soft(); more = NOT is("}"); }
+      ELSE { more = FALSE; }
+    }
+    expect("}");
+    grouping = grouping - 1;
+    code = "kind:\"record\",fields:[" + fields + "]";
+  } ELSE {
+    IF item.tag != "identifier" AND item.tag != "NULL" AND item.tag != "INT" {
+      problem(item, "Expected type name.");
+    }
+    IF item.value == "List" {
+      expect("<");
+      grouping = grouping + 1;
+      LET element = parseType();
+      soft();
+      expect(">");
+      grouping = grouping - 1;
+      code = "kind:\"list\",element:" + element;
+    } ELSE {
+      LET name = item.value;
+      IF item.tag == "NULL" { name = "Null"; }
+      IF item.tag == "INT" { name = "Int"; }
+      code = "kind:\"named\",name:" + quote(name);
+    }
+  }
+  RETURN "{" + code + ",start:" + TEXT(item.start) + ",end:" + TEXT(tokens[at - 1].stop) + "}";
+}
+FUNC power(op) {
+  IF op == "OR" { RETURN 1; }
+  IF op == "XOR" { RETURN 2; }
+  IF op == "+" OR op == "-" { RETURN 3; }
+  IF op == "AND" { RETURN 4; }
+  IF op == "==" OR op == "!=" OR op == "<" OR op == ">" OR op == "<=" OR op == ">=" { RETURN 5; }
+  RETURN 0;
+}
+FUNC node(code, start, stop, name) {
+  RETURN {code: code, start: start, stop: stop, name: name};
+}
+FUNC wrap(code, start, stop) {
+  RETURN "r.e(" + position(start, stop) + ",()=>" + code + ")";
+}
+FUNC arguments(closing) {
+  LET code = "";
+  soft();
+  LET more = NOT is(closing);
+  WHILE more {
+    code = code + expression(1).code + ",";
+    soft();
+    IF is(",") { take(); soft(); more = NOT is(closing); }
+    ELSE { more = FALSE; }
+  }
+  RETURN code;
+}
+FUNC expression(minimum) {
+  soft();
+  LET item = take();
+  LET code = "";
+  LET name = NULL;
+  LET stop = item.stop;
+  IF item.tag == "number" {
+    code = "r.number(" + quote(item.value) + "," + TEXT(CONTAINS(item.value, ".")) + "," + position(item.start, stop) + ")";
+  } ELSE {
+    IF item.tag == "string" {
+      code = "r.literal(" + quote(item.value) + "," + position(item.start, stop) + ")";
+    } ELSE {
+      IF item.tag == "TRUE" OR item.tag == "FALSE" OR item.tag == "NULL" {
+        LET value = "null";
+        IF item.tag == "TRUE" { value = "true"; }
+        IF item.tag == "FALSE" { value = "false"; }
+        code = "r.literal(" + value + "," + position(item.start, stop) + ")";
+      } ELSE {
+        IF item.tag == "-" OR item.tag == "NOT" {
+          LET value = expression(6);
+          stop = value.stop;
+          code = "r.unary(" + quote(item.tag) + "," + value.code + "," + position(item.start, stop) + ")";
+        } ELSE {
+          IF item.tag == "(" {
+            grouping = grouping + 1;
+            LET value = expression(1);
+            soft(); expect(")");
+            grouping = grouping - 1;
+            RETURN postfix(value, minimum);
+          } ELSE {
+            IF item.tag == "[" {
+              grouping = grouping + 1;
+              LET values = arguments("]");
+              stop = expect("]").stop;
+              grouping = grouping - 1;
+              code = "r.list([" + values + "]," + position(item.start, stop) + ")";
+            } ELSE {
+              IF item.tag == "{" {
+                grouping = grouping + 1;
+                soft();
+                LET fields = "";
+                LET names = [];
+                LET more = NOT is("}");
+                WHILE more {
+                  LET key = fieldName();
+                  names = unique(names, key);
+                  expect(":");
+                  fields = fields + "[" + quote(key) + "," + expression(1).code + "],";
+                  soft();
+                  IF is(",") { take(); soft(); more = NOT is("}"); }
+                  ELSE { more = FALSE; }
+                }
+                stop = expect("}").stop;
+                grouping = grouping - 1;
+                code = "r.record([" + fields + "]," + position(item.start, stop) + ")";
+              } ELSE {
+                IF CONTAINS(unsupported, "|" + item.tag + "|") { problem(item, "Discord selection syntax is not supported by this compiler."); }
+                IF item.tag != "identifier" AND NOT CONTAINS(callableNames, "|" + item.tag + "|") { problem(item, "Expected expression."); }
+                name = item.value;
+                IF item.tag != "identifier" { name = item.tag; }
+                code = "r.get(s," + quote(name) + "," + position(item.start, stop) + ")";
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  RETURN postfix(node(wrap(code, item.start, stop), item.start, stop, name), minimum);
+}
+FUNC postfix(left, minimum) {
+  LET more = TRUE;
+  WHILE more {
+    soft();
+    LET op = current();
+    IF op.tag == "(" {
+      take(); grouping = grouping + 1;
+      LET values = arguments(")");
+      LET stop = expect(")").stop;
+      grouping = grouping - 1;
+      LET callee = left.code;
+      IF left.name != NULL { callee = "r.callee(s," + quote(left.name) + "," + position(left.start, left.stop) + ")"; }
+      LET code = "r.call(" + callee + ",[" + values + "]," + position(left.start, stop) + ")";
+      left = node(wrap(code, left.start, stop), left.start, stop, NULL);
+    } ELSE {
+      IF op.tag == "[" {
+        take(); grouping = grouping + 1;
+        LET index = expression(1);
+        soft();
+        LET stop = expect("]").stop;
+        grouping = grouping - 1;
+        LET code = "r.index(" + left.code + "," + index.code + "," + position(left.start, stop) + "," + position(index.start, index.stop) + ")";
+        left = node(wrap(code, left.start, stop), left.start, stop, NULL);
+      } ELSE {
+        IF op.tag == "." {
+          take();
+          LET key = expect("identifier");
+          LET code = "r.field(" + left.code + "," + quote(key.value) + "," + position(left.start, key.stop) + ")";
+          left = node(wrap(code, left.start, key.stop), left.start, key.stop, NULL);
+        } ELSE {
+          LET precedence = power(op.tag);
+          IF precedence < minimum { more = FALSE; }
+          ELSE {
+            take();
+            LET right = expression(precedence + 1);
+            LET code = "r.binary(" + quote(op.tag) + "," + left.code + ",()=>" + right.code + "," + position(left.start, right.stop) + ")";
+            left = node(wrap(code, left.start, right.stop), left.start, right.stop, NULL);
+          }
+        }
+      }
+    }
+  }
+  RETURN left;
+}
+FUNC block(stops) {
+  LET code = "";
+  separators();
+  WHILE NOT is("eof") AND NOT CONTAINS(stops, "|" + current().tag + "|") {
+    LET result = statement();
+    code = code + result.code;
+    IF NOT result.closed AND NOT is("eof") AND NOT is("separator") AND NOT CONTAINS(stops, "|" + current().tag + "|") {
+      problem(current(), "Expected newline or semicolon between statements.");
+    }
+    separators();
+  }
+  RETURN code;
+}
+FUNC braced() {
+  expect("{");
+  LET saved = grouping;
+  grouping = 0;
+  LET code = block("|}|");
+  expect("}");
+  grouping = saved;
+  RETURN code;
+}
+FUNC body() {
+  IF is("{") { RETURN braced(); }
+  expect("DO");
+  LET code = block("|END|");
+  expect("END");
+  RETURN code;
+}
+FUNC statement() {
+  LET item = take();
+  LET code = "";
+  LET closed = FALSE;
+  IF item.tag == "FUNC" {
+    LET name = expect("identifier").value;
+    expect("("); grouping = grouping + 1;
+    soft();
+    LET parameters = "";
+    LET names = [];
+    LET more = NOT is(")");
+    WHILE more {
+      LET parameter = expect("identifier").value;
+      names = unique(names, parameter);
+      parameters = parameters + "{name:" + quote(parameter) + ",annotation:" + annotation() + "},";
+      soft();
+      IF is(",") { take(); soft(); more = NOT is(")"); }
+      ELSE { more = FALSE; }
+    }
+    expect(")"); grouping = grouping - 1;
+    LET resultType = annotation();
+    LET contents = body();
+    closed = tokens[at - 1].tag == "}";
+    code = "r.func(s," + quote(name) + ",[" + parameters + "]," + resultType + ",(s)=>{\n" + contents + "},";
+  } ELSE {
+    IF item.tag == "TYPE" {
+      LET name = "Int";
+      IF is("INT") { take(); } ELSE { name = expect("identifier").value; }
+      expect("=");
+      code = "r.type(s," + quote(name) + "," + parseType() + ",";
+    } ELSE {
+      IF item.tag == "LET" OR (item.tag == "identifier" AND is("=")) {
+        LET name = item.value;
+        LET annotationCode = "undefined";
+        LET method = "assign";
+        IF item.tag == "LET" {
+          name = expect("identifier").value;
+          annotationCode = annotation();
+          method = "declare";
+        }
+        expect("=");
+        LET value = expression(1);
+        LET p = position(item.start, value.stop);
+        code = "r." + method + "(s," + quote(name) + ",";
+        IF method == "declare" { code = code + annotationCode + ","; }
+        code = code + "()=>" + value.code + "," + p + "," + position(value.start, value.stop) + ");\n";
+        RETURN {code: "r.tick(" + p + ");\n" + code, closed: FALSE};
+      } ELSE {
+        IF item.tag == "RETURN" {
+          code = "r.ret(" + expression(1).code + ");\n";
+        } ELSE {
+          IF item.tag == "IF" {
+            LET condition = expression(1);
+            LET yes = "";
+            LET no = "";
+            IF is("{") {
+              yes = braced();
+              LET saved = at;
+              separators();
+              IF is("ELSE") { take(); no = braced(); } ELSE { at = saved; }
+              closed = TRUE;
+            } ELSE {
+              expect("THEN");
+              yes = block("|ELSE|END|");
+              IF is("ELSE") { take(); no = block("|END|"); }
+              expect("END");
+            }
+            LET p = position(item.start, tokens[at - 1].stop);
+            code = "if(r.boolean(" + condition.code + "," + position(condition.start, condition.stop) + ")){r.block(s,(s)=>{\n" + yes + "}," + p + ");}else{r.block(s,(s)=>{\n" + no + "}," + p + ");}\n";
+          } ELSE {
+            IF item.tag == "WHILE" {
+              LET condition = expression(1);
+              LET contents = body();
+              closed = tokens[at - 1].tag == "}";
+              LET p = position(item.start, tokens[at - 1].stop);
+              code = "while(r.boolean(" + condition.code + "," + position(condition.start, condition.stop) + ")){r.tick(" + p + ");r.block(s,(s)=>{\n" + contents + "}," + p + ");}\n";
+            } ELSE {
+              IF item.tag == "FOR" {
+                LET name = expect("identifier").value;
+                expect("IN");
+                LET collection = expression(1);
+                LET contents = body();
+                closed = tokens[at - 1].tag == "}";
+                LET p = position(item.start, tokens[at - 1].stop);
+                code = "for(const v of r.items(" + collection.code + "," + position(collection.start, collection.stop) + ")){r.tick(" + p + ");r.block(s,(s)=>{r.bind(s," + quote(name) + ",v);\n" + contents + "}," + p + ");}\n";
+              } ELSE {
+                at = at - 1;
+                code = expression(1).code + ";\n";
+                IF is("=") { problem(current(), "Lists and records are immutable."); }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  LET p = position(item.start, tokens[at - 1].stop);
+  IF item.tag == "FUNC" OR item.tag == "TYPE" { code = code + p + ");\n"; }
+  RETURN {code: "r.tick(" + p + ");\n" + code, closed: closed};
+}
+
+LET scanning = TRUE;
+WHILE scanning {
+  LET item = nextToken();
+  tokens = APPEND(tokens, item);
+  scanning = item.tag != "eof";
+}
+LET output = block("|eof|");
+expect("eof");
+RETURN "// Generated by the Sing compiler.\nimport { Runtime, runMain } from " + quote(RUNTIME) + ";\nexport default function run(options = {}) {\nconst r = new Runtime(" + quote(SOURCE) + ",options);\nreturn r.program((s)=>{\n" + output + "});\n}\nrunMain(import.meta.url, run);\n";

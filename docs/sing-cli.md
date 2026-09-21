@@ -49,9 +49,44 @@ The runtime has the same worker timeout, heap, work, nesting, and string limits 
 an integer digit limit. [The specification](sing-spec.md) explains why the abstract core is
 Turing complete while a particular CLI run remains bounded.
 
+## Functions and collections
+
+Run `pnpm run sing examples/functions.sing` for an example with `FUNC`, a captured variable,
+immutable lists/records, and runtime-checked `TYPE` aliases. Functions can return collections
+or other functions internally; the final top-level result must still be a scalar. For example:
+
+```text
+FUNC sum(values: List<Int>): Int {
+  LET total: Int = 0;
+  FOR value IN values { total = total + value; }
+  RETURN total;
+}
+RETURN sum([10, 20, 30]);
+```
+
+Semicolons or newlines separate simple statements. Brace blocks and legacy `DO`/`THEN`/`END`
+blocks are both supported. See the [specification](sing-spec.md) for closure, annotation,
+collection, and string operation semantics. Annotations are checked during execution, not
+statically. Recursive aliases and function-type annotations are not supported.
+
+## Compile to JavaScript
+
+```sh
+pnpm run sing:compile examples/functions.sing --run
+pnpm run sing:compile examples/counter.sing -o counter.mjs
+node counter.mjs
+pnpm run sing:bootstrap
+```
+
+The compiler is written in Sing. Its first version supports ASCII identifiers and the
+standalone language, not Discord selections. Generated modules depend on this checkout's
+built runtime. `--run` adds a bounded worker; direct Node execution does not add worker limits.
+See the [compiler guide](sing-compiler.md) for the bootstrap chain, output behavior, and API.
+
 ## Embedding from TypeScript
 
-The core has no Node or Discord imports. It evaluates synchronously with explicit limits:
+The core has no Node or Discord imports. Trusted embedders may supply a scalar-only `globals`
+map in execution options (for example, `{ SOURCE: input }`). It evaluates synchronously with explicit limits:
 
 ```ts
 import { execute } from './dist/sing/index.js';
@@ -62,7 +97,7 @@ const result = execute('RETURN 9007199254740992 + 1', { limits });
 ```
 
 The repository's shared `limits` object supplies the required fields; external embedders can
-instead supply an `ExecutionLimits` object. The direct API is intended for trusted embedding
+instead supply an `ExecutionLimits` object, including the `singCollectionItems` cap. The direct API is intended for trusted embedding
 and conformance tests. For untrusted source, use the isolated runner:
 
 ```ts

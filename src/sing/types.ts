@@ -12,6 +12,7 @@ export interface ExecutionLimits {
   singDepth: number;
   singStringLength: number;
   singIntegerDigits: number;
+  singCollectionItems: number;
 }
 export interface Plan {
   recipients: string[];
@@ -41,4 +42,5 @@ export interface SelectionHost {
 export interface ExecutionOptions {
   limits: ExecutionLimits;
   host?: SelectionHost;
+  globals?: Readonly<Record<string, Scalar>>;
 }

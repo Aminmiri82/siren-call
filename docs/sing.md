@@ -37,7 +37,7 @@ resolver. Role matching is also case- and accent-insensitive in Sing.
 The lexer takes the longest known name ending at a complete name boundary. With both `John`
 and `John Doe` in the snapshot, `@John Doe` selects the latter. `@Johnathan` does not match `John`.
 
-Operators, parentheses, commas, semicolons, quotes, `@`, `#`, newlines, and reserved
+Operators, parentheses, braces, brackets, colons, commas, semicolons, quotes, `@`, `#`, newlines, and reserved
 words (in any capitalization) end an unquoted name. Names containing these need quotes:
 
 ```text
@@ -103,13 +103,13 @@ excluded. Existing fixtures without presence data can still use every other sele
 | `a XOR b`         | Symmetric difference                                 |
 | `a - b`           | Difference                                           |
 | `NOT a`           | Eligible members outside `a`                         |
-| `COUNT(a)`        | Size of a set or record collection                   |
+| `COUNT(a)`        | Size of a set or list                                |
 
 Set operations deduplicate IDs. They preserve left-hand order, then append new right-hand IDs
 when applicable. Complement follows snapshot order. Intermediate sets may cover the whole
 snapshot; only the final plan is subject to the shared 5,000-recipient output cap.
 
-Precedence, highest first: field access and calls; unary `NOT` and `-`; comparisons;
+Precedence, highest first: field access, indexing, and calls; unary `NOT` and `-`; comparisons;
 `AND`; `+` and `-`; `XOR`; `OR`. Binary operators of equal precedence associate left to right.
 Use parentheses for mixed expressions. Write `NOT (COUNT(a) > 0)` to negate a comparison.
 Comparisons are binary; write `x > 0 AND x < 10`, not `0 < x < 10`.
@@ -129,7 +129,7 @@ Conditions require booleans: use `COUNT(a) > 0`, not a set as a condition.
 
 Strings use double quotes with JSON escapes (`\"`, `\\`, `\n`, `\t`, `\uXXXX`).
 Actual line breaks inside a string are errors. Statements are separated by newlines or
-semicolons. Expressions may span lines inside parentheses. `#` begins a comment through the
+semicolons. Expressions may span lines inside parentheses and list/record literals. `#` begins a comment through the
 end of the line, except inside strings and quoted names.
 
 ## Variables and control flow
@@ -163,7 +163,8 @@ END
 `LET` declares a variable in the current scope. Assign with `name = expression` after declaration.
 A repeated declaration in the same scope is an error. Branches and loop iterations create local
 scopes; assignment updates the nearest enclosing declaration. A local declaration may shadow
-an outer variable. Variables do not have fixed types, but operations check operand types.
+an outer variable. Unannotated variables do not have fixed types. Optional annotations constrain initializers and
+later assignments; operations also check operand types.
 
 ```text
 LET audience = NONE
@@ -181,16 +182,53 @@ END
 PING audience SAYING "Staff meeting"
 ```
 
-`FOR` accepts a recipient set, `MEMBERS`, or `MESSAGES`. Iterating a set yields member records
+`FOR` accepts a list, recipient set, `MEMBERS`, or `MESSAGES`. Iterating a set yields member records
 in set order. Its collection is evaluated once; assigning a different set during the loop does
-not change that iteration. `WHILE` reevaluates its boolean condition each time. Both require
-`DO … END`. There are no user-defined functions, recursion, `BREAK`, or `CONTINUE`.
+not change that iteration. `WHILE` reevaluates its boolean condition each time. Both accept
+`DO … END` or `{ … }`. `IF` accepts `THEN … ELSE … END` or `{ … } ELSE { … }`.
+There is no `BREAK` or `CONTINUE`.
 
 The first executed `PING` ends evaluation and returns its plan, including from inside a loop
 or branch. The complete source must still parse. Reaching the end without executing `PING`
-is an error. `RETURN` is reserved for standalone scalar results and cannot replace `PING` in a
-Discord selection script. Variables formerly named `return` must be renamed, and recipient names
+is an error. `RETURN` exits a function with a value; at top level it produces a standalone scalar result
+and cannot replace `PING` in a Discord selection script. Variables formerly named `return` must be renamed, and recipient names
 containing that reserved word must be quoted. An empty selection yields a preview that cannot be sent, just as with Lua.
+
+## Functions, collections, and optional types
+
+```text
+TYPE Notice = {recipients: String, message: String};
+
+FUNC announce(notice: Notice) {
+  PING ROLE(notice.recipients) SAYING notice.message;
+}
+
+LET notices: List<Notice> = [
+  {recipients: "Teachers", message: "Class is cancelled"}
+];
+announce(notices[0]);
+```
+
+`FUNC` creates a lexically scoped function: it sees variables from its definition environment,
+not its caller's locals. Functions support recursion, nested declarations, captured variables,
+and returning other functions. `RETURN` exits only the current function; fallthrough returns
+`NULL`. A `PING` inside any function still ends the entire program.
+
+Lists and records are immutable. Index lists from zero, access record fields with `.field` or
+`["field"]`, and use `APPEND(list, value)` to construct a new list. Variables can be rebound;
+existing aliases retain the original collection. Invalid indexes and missing fields are errors.
+Recipient sets remain distinct from ordinary lists and records.
+
+Annotations are optional: `LET n: Int = 1`, `FUNC f(n: Int): Int { RETURN n; }`.
+Types are `Int`, `Decimal`, `String`, `Bool`, `Null`, `List<T>`, and record shapes such as
+`{name: String}`. Record shapes permit extra fields. `TYPE Name = ...` declares a scoped,
+non-recursive alias before use. Checks happen at runtime on initialization, assignment,
+arguments, and returns. There is no static checker or implicit conversion.
+
+`FUNC`, `TYPE`, `APPEND`, `LENGTH`, and `SLICE` are newly reserved words; quote recipient names
+containing them. Semicolons remain optional when a newline separates statements. Closing block
+braces can separate statements by themselves. See the [specification](sing-spec.md) and
+[runnable example](../examples/functions.sing) for the full rules.
 
 ## Context and built-ins
 
@@ -221,14 +259,24 @@ PING audience SAYING "Following up"
 | ---------------------------- | ---------------------------------------------------------------------------- |
 | `MEMBER(reference)`          | One eligible member, or an error                                             |
 | `ROLE(reference)`            | Eligible holders of one role, or an error                                    |
-| `COUNT(collection)`          | Count of a recipient set, `MEMBERS`, or `MESSAGES`                           |
+| `COUNT(collection)`          | Count of a list or recipient set, including `MEMBERS` and `MESSAGES`         |
 | `JOINED_AFTER("YYYY-MM-DD")` | Members whose known join time is strictly after UTC midnight on a valid date |
 | `CONTAINS(text, fragment)`   | Case-sensitive substring test                                                |
 | `TEXT(value)`                | String conversion of a string, number, boolean, or `NULL`                    |
 
+`APPEND(list, value)` returns a new list. `LENGTH(string)` counts UTF-16 code units, and
+`SLICE(string, start, end)` returns a substring with an exclusive end. Indexes and slice bounds
+must be exact integers and in range. These built-ins work in both standalone and selection scripts.
+
+`INT(string)` parses signed decimal digits exactly. `CHAR_CODE(string)` returns the code of
+one UTF-16 unit; `CHAR(integer)` converts a value from 0 to 65535 into that unit. `ERROR(string)`
+stops execution with the supplied diagnostic. These four built-ins are newly reserved in every
+capitalization; quote colliding recipient names and rename colliding variables. `Int` remains
+available in type annotations.
+
 `TEXT(TRUE)`, `TEXT(FALSE)`, and `TEXT(NULL)` produce `"true"`, `"false"`, and `"null"`.
 Records and collections cannot be converted with `TEXT`. Sing has no filesystem, network,
-imports, environment access, arbitrary function calls, or object mutation.
+imports, environment access, arbitrary JavaScript calls, or object mutation.
 
 ## Errors and limits
 
@@ -250,7 +298,7 @@ Source is limited to 16,000 UTF-8 bytes (Discord inputs additionally cap it at 4
 Execution runs in a dedicated worker with an empty environment, a 10-second startup deadline,
 a 2-second execution deadline, and a 64 MiB old-generation heap limit. These are not total
 process memory limits. Sing also limits work to 1,000,000 units, nesting to 100 levels,
-each intermediate string to 16,000 UTF-16 code units, and integer magnitudes to 16,000 decimal
+each list/record to 16,000 elements/fields, each intermediate string to 16,000 UTF-16 code units, and integer magnitudes to 16,000 decimal
 digits. Exact integer operations consume work based on digit lengths. Set scans and string operations
 consume work proportional to their inputs; a large snapshot may require a simpler script.
 Parser depth includes blocks and expression recursion, so the accepted number of written

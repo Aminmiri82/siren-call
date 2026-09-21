@@ -1,0 +1,24 @@
+TYPE Token = {kind: String, value: String};
+
+FUNC makeToken(kind: String, value: String): Token {
+  RETURN {kind: kind, value: value};
+}
+
+FUNC makePrefixer(prefix: String) {
+  FUNC apply(value: String): String {
+    RETURN prefix + value;
+  }
+  RETURN apply;
+}
+
+LET original: List<Token> = [makeToken("integer", "42")];
+LET tokens: List<Token> = APPEND(original, makeToken("plus", "+"));
+LET describe = makePrefixer("token: ");
+LET output = "";
+
+FOR token IN tokens {
+  output = output + describe(token.kind) + "=" + token.value + "\n";
+}
+
+# APPEND returns a new list; original still contains one token.
+RETURN output + "original count: " + TEXT(COUNT(original));

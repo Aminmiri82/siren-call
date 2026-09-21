@@ -29,8 +29,8 @@ person who ran the command.
 
 ## Standalone Sing
 
-Sing also runs without Discord. Its TypeScript core supports exact integers, variables,
-conditionals, loops, and scalar `RETURN` values:
+Sing also runs without Discord. Its TypeScript core supports exact integers, lexical `FUNC` functions, immutable lists/records,
+optional runtime-checked types, conditionals, loops, and scalar top-level `RETURN` values:
 
 ```sh
 pnpm run sing examples/counter.sing
@@ -40,7 +40,26 @@ pnpm run sing examples/counter.sing
 See the [CLI and embedding guide](docs/sing-cli.md) and [language specification](docs/sing-spec.md).
 The abstract integer core is Turing complete; the CLI and bot retain resource limits.
 Whole-number literals and `COUNT` are exact integers; decimal literals remain floating-point.
-Mixing them in arithmetic is an error. `RETURN` is newly reserved; Discord scripts still use `PING`.
+Mixing them in arithmetic is an error. Try `pnpm run sing examples/functions.sing` for functions,
+closures, immutable collections, and `TYPE` aliases. Braces and semicolons are supported alongside
+legacy blocks. `FUNC`, `TYPE`, `APPEND`, `LENGTH`, and `SLICE` are newly reserved; quote colliding
+recipient names. Discord scripts still finish with `PING`.
+
+## Compile Sing with Sing
+
+The standalone [compiler](compiler/compiler.sing) is written in Sing and emits JavaScript:
+
+```sh
+pnpm run sing:compile examples/functions.sing --run
+pnpm run sing:bootstrap
+```
+
+The bootstrap check rebuilds the compiler through three identical generations and verifies
+sample programs with each. Generated stages live in `dist/bootstrap/`. See the
+[compiler guide](docs/sing-compiler.md) for saving modules, architecture, and limits.
+This first compiler supports ASCII identifiers and standalone programs; the bot continues
+using its existing interpreter. `INT`, `CHAR_CODE`, `CHAR`, and `ERROR` are now reserved
+built-ins, so quote colliding recipient names and rename colliding variables.
 
 ## Run locally
 
@@ -102,11 +121,11 @@ Register it in the map in `src/languages/index.ts` and expose a command/editor c
 
 ## Execution bounds
 
-Sing runs in a fresh worker with an empty environment and a 64 MiB JavaScript old-generation
+The Sing interpreter runs in a fresh worker with an empty environment and a 64 MiB JavaScript old-generation
 heap limit. It interprets a closed syntax tree, never JavaScript or Lua source, and exposes only
 plain snapshot fields and documented built-ins. It shares the source, startup, execution, and
 output limits below. Additional Sing bounds are 1,000,000 evaluation work units (including set
-and string work), 100 levels of parser/evaluator nesting, 16,000 UTF-16 code units per
+and string work), 100 levels of parser/execution/type/collection nesting, 16,000 elements/fields per list/record, 16,000 UTF-16 code units per
 intermediate string, and 16,000 decimal digits per exact integer. Worker limits are not a total process RSS limit. See the
 [Sing reference](docs/sing.md) for details.
 

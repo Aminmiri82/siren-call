@@ -1,19 +1,36 @@
 import { fail } from './diagnostics.js';
 import type { Span } from './diagnostics.js';
+import { primitive, primitiveNames } from './primitives.js';
 import { parse } from './parser.js';
-import type { Expr, Statement } from './parser.js';
-import type { Value, RecordValue, ExecutionOptions, ExecutionResult } from './types.js';
+import type { Expr, Statement, TypeExpr } from './parser.js';
+import type { Value as HostValue, ExecutionOptions, ExecutionResult, Plan } from './types.js';
+import { Scope, tagged } from './values.js';
+import type { Value, FunctionValue } from './values.js';
 
 const integerCost = (value: Value): number =>
   typeof value === 'bigint' ? value.toString().replace('-', '').length : 0;
 
-class Scope {
-  readonly values = new Map<string, Value>();
-  constructor(readonly parent?: Scope) {}
-  owner(name: string): Scope | undefined {
-    return this.values.has(name) ? this : this.parent?.owner(name);
-  }
+type Completion = { kind: 'return'; value: Value } | { kind: 'ping'; value: Plan };
+// PING can arise inside any expression through a function call, and ends the entire script.
+class PingSignal {
+  constructor(readonly completion: Extract<Completion, { kind: 'ping' }>) {}
 }
+const builtins = new Set([
+  ...primitiveNames,
+  'COUNT',
+  'CONTAINS',
+  'TEXT',
+  'APPEND',
+  'LENGTH',
+  'SLICE',
+  'MEMBER',
+  'ROLE',
+  'JOINED_AFTER',
+]);
+const primitiveTypes = new Set(['Int', 'Decimal', 'String', 'Bool', 'Null']);
+
+const valueDepth = (value: Value) =>
+  tagged(value, 'list') || tagged(value, 'record') ? value.depth : 0;
 
 export function execute(source: string, options: ExecutionOptions): ExecutionResult {
   const { limits, host } = options;
@@ -23,6 +40,7 @@ export function execute(source: string, options: ExecutionOptions): ExecutionRes
     'singDepth',
     'singStringLength',
     'singIntegerDigits',
+    'singCollectionItems',
   ] as const) {
     if (!Number.isSafeInteger(limits[name]) || limits[name] <= 0)
       throw new Error(`Invalid Sing limit: ${name}. Expected a positive safe integer.`);
@@ -31,6 +49,8 @@ export function execute(source: string, options: ExecutionOptions): ExecutionRes
     fail(source, { start: 0, end: 0 }, 'source-limit', 'Sing script is too large.');
   const statements = parse(source, host?.names ?? { has: () => false }, limits.singDepth);
   let steps = 0;
+  let executionDepth = 0;
+  const hostOrigins = new WeakMap<object, HostValue>();
   const tick = (span: Span, cost = 1) => {
     steps += cost;
     if (steps > limits.singSteps)
@@ -69,7 +89,8 @@ export function execute(source: string, options: ExecutionOptions): ExecutionRes
     fail(source, span, 'host', 'This operation requires the Discord selection host.');
   const services = {
     tick,
-    text,
+    text: (value: HostValue, span: Span) =>
+      typeof value === 'string' ? value : problem(span, 'Expected a string.'),
     fail: (span: Span, code: string, message: string): never => fail(source, span, code, message),
   };
   const combine = (left: Set<string>, right: Set<string>, op: string, span: Span) => {
@@ -84,16 +105,142 @@ export function execute(source: string, options: ExecutionOptions): ExecutionRes
     }
     return result;
   };
-  function evaluate(expr: Expr, scope: Scope, depth = 0): Value {
-    tick(expr);
+  function collectionDepth(values: readonly Value[], span: Span): number {
+    tick(span, values.length);
+    if (values.length > limits.singCollectionItems)
+      fail(source, span, 'collection-limit', 'Sing collection is too large.');
+    let depth = 1;
+    for (const value of values) depth = Math.max(depth, valueDepth(value) + 1);
     if (depth > limits.singDepth)
-      fail(
-        source,
-        expr,
-        'depth-limit',
-        'Sing expression is too deep. Split it into LET statements.',
+      fail(source, span, 'depth-limit', 'Sing collection nesting is too deep.');
+    return depth;
+  }
+  function list(items: Value[], span: Span): Extract<Value, { kind: 'list' }> {
+    const depth = collectionDepth(items, span);
+    return { kind: 'list', items: Object.freeze(items), depth };
+  }
+  function fromHost(value: HostValue, span: Span): Value {
+    if (Array.isArray(value)) {
+      const result = list(
+        value.map(item => fromHost(item, span)),
+        span,
       );
-    const ev = (child: Expr) => evaluate(child, scope, depth + 1);
+      hostOrigins.set(result, value);
+      return result;
+    }
+    if (value !== null && typeof value === 'object' && !(value instanceof Set)) {
+      const fields = new Map<string, Value>();
+      const hidden = new Set<string>();
+      for (const [name, member] of Object.entries(value)) {
+        tick(span);
+        if (Array.isArray(member)) hidden.add(name);
+        else fields.set(name, bounded(member ?? null, span));
+      }
+      const result: Extract<Value, { kind: 'record' }> = {
+        kind: 'record',
+        fields,
+        hidden,
+        depth: collectionDepth([...fields.values()], span),
+      };
+      hostOrigins.set(result, value);
+      return result;
+    }
+    return bounded(value, span);
+  }
+  function field(value: Value, name: string, span: Span): Value {
+    if (!tagged(value, 'record')) return problem(span, 'Only records have fields.');
+    if (value.hidden?.has(name))
+      return problem(span, 'roleIds is not a recipient set. Use ROLE(...) to select role members.');
+    if (!value.fields.has(name)) return fail(source, span, 'field', `Unknown field “${name}”.`);
+    return value.fields.get(name)!;
+  }
+  function resolveType(type: TypeExpr, scope: Scope, depth = 0): TypeExpr {
+    tick(type);
+    if (depth > limits.singDepth)
+      return fail(source, type, 'depth-limit', 'Sing type nesting is too deep.');
+    if (type.kind === 'named') {
+      if (primitiveTypes.has(type.name)) return type;
+      const alias = scope.type(type.name);
+      if (!alias)
+        return fail(
+          source,
+          type,
+          'unknown-type',
+          `Unknown type “${type.name}”. Declare aliases before use; recursive aliases are not supported.`,
+        );
+      // Revisit expanded aliases so many shallow declarations cannot evade the depth bound.
+      return resolveType(alias, scope, depth + 1);
+    }
+    if (type.kind === 'list')
+      return { ...type, element: resolveType(type.element, scope, depth + 1) };
+    return {
+      ...type,
+      fields: type.fields.map(item => ({
+        ...item,
+        type: resolveType(item.type, scope, depth + 1),
+      })),
+    };
+  }
+  function checkType(value: Value, type: TypeExpr, span: Span, path: string, depth = 0): void {
+    tick(span);
+    if (depth > limits.singDepth) fail(source, span, 'depth-limit', 'Sing type check is too deep.');
+    if (type.kind === 'list') {
+      if (!tagged(value, 'list')) return problem(span, `${path} expects List.`);
+      for (let i = 0; i < value.items.length; i++)
+        checkType(value.items[i]!, type.element, span, `${path}[${i}]`, depth + 1);
+      return;
+    }
+    if (type.kind === 'record') {
+      if (!tagged(value, 'record')) return problem(span, `${path} expects a record.`);
+      for (const item of type.fields) {
+        if (!value.fields.has(item.name))
+          return problem(span, `${path} is missing field “${item.name}”.`);
+        checkType(value.fields.get(item.name)!, item.type, span, `${path}.${item.name}`, depth + 1);
+      }
+      return;
+    }
+    const matches =
+      type.name === 'Int'
+        ? typeof value === 'bigint'
+        : type.name === 'Decimal'
+          ? typeof value === 'number'
+          : type.name === 'String'
+            ? typeof value === 'string'
+            : type.name === 'Bool'
+              ? typeof value === 'boolean'
+              : value === null;
+    if (!matches) problem(span, `${path} expects ${type.name}.`);
+  }
+  function callFunction(fn: FunctionValue, args: Value[], span: Span): Value {
+    if (args.length !== fn.parameters.length)
+      fail(source, span, 'arguments', `${fn.name} expects ${fn.parameters.length} arguments.`);
+    const scope = new Scope(fn.environment);
+    fn.parameters.forEach((parameter, i) => {
+      const value = args[i]!;
+      if (parameter.resolved) checkType(value, parameter.resolved, span, parameter.name);
+      scope.values.set(parameter.name, { value, annotation: parameter.resolved });
+    });
+    const result = run(fn.body, scope);
+    if (result?.kind === 'ping') throw new PingSignal(result);
+    const value = result?.value ?? null;
+    if (fn.resultType) checkType(value, fn.resultType, span, `${fn.name} return`);
+    return value;
+  }
+  function nested<T>(span: Span, action: () => T): T {
+    if (++executionDepth > limits.singDepth)
+      fail(source, span, 'depth-limit', 'Sing execution nesting is too deep.');
+    try {
+      return action();
+    } finally {
+      executionDepth--;
+    }
+  }
+  function evaluate(expr: Expr, scope: Scope): Value {
+    return nested(expr, () => evaluateInner(expr, scope));
+  }
+  function evaluateInner(expr: Expr, scope: Scope): Value {
+    tick(expr);
+    const ev = (child: Expr) => evaluate(child, scope);
     if (expr.kind === 'audience')
       return host?.audience(expr.name, expr, services) ?? unavailable(expr);
     if (expr.kind === 'literal') return bounded(expr.value, expr);
@@ -101,10 +248,11 @@ export function execute(source: string, options: ExecutionOptions): ExecutionRes
       return host?.resolve(expr.name, expr.reference, expr, services) ?? unavailable(expr);
     if (expr.kind === 'variable') {
       const owner = scope.owner(expr.name);
-      if (owner) return owner.values.get(expr.name)!;
+      if (owner) return owner.values.get(expr.name)!.value;
+      if (builtins.has(expr.name)) return { kind: 'builtin', name: expr.name };
       if (expr.name === 'NONE') return new Set<string>();
       const value = host?.variable(expr.name);
-      if (value !== undefined) return value;
+      if (value !== undefined) return fromHost(value, expr);
       return fail(
         source,
         expr,
@@ -112,24 +260,23 @@ export function execute(source: string, options: ExecutionOptions): ExecutionRes
         `Unknown variable “${expr.name}”. Declare it with LET; recipient names start with @.`,
       );
     }
-    if (expr.kind === 'field') {
+    if (expr.kind === 'list') return list(expr.items.map(ev), expr);
+    if (expr.kind === 'record') {
+      const fields = new Map(expr.fields.map(item => [item.name, ev(item.value)]));
+      return { kind: 'record', fields, depth: collectionDepth([...fields.values()], expr) };
+    }
+    if (expr.kind === 'field') return field(ev(expr.value), expr.field, expr);
+    if (expr.kind === 'index') {
       const value = ev(expr.value);
-      if (!value || typeof value !== 'object' || value instanceof Set || Array.isArray(value))
-        return problem(expr, 'Only member and message records have fields.');
-      if (!Object.hasOwn(value, expr.field))
-        return fail(
-          source,
-          expr,
-          'field',
-          `Unknown field “${expr.field}”. Available fields: ${Object.keys(value).join(', ')}.`,
-        );
-      const field = value[expr.field];
-      if (Array.isArray(field))
-        return problem(
-          expr,
-          'roleIds is not a recipient set. Use ROLE(...) to select role members.',
-        );
-      return field ?? null;
+      const index = ev(expr.index);
+      if (tagged(value, 'record')) return field(value, text(index, expr.index), expr);
+      if (!tagged(value, 'list') && typeof value !== 'string')
+        return problem(expr, 'Indexing expects a list, string, or record.');
+      const length = typeof value === 'string' ? value.length : value.items.length;
+      if (typeof index !== 'bigint') return problem(expr.index, 'Index expects an Int.');
+      if (index < 0n || index >= BigInt(length))
+        return fail(source, expr.index, 'index', 'Index is out of bounds.');
+      return typeof value === 'string' ? value[Number(index)]! : value.items[Number(index)]!;
     }
     if (expr.kind === 'unary') {
       const value = ev(expr.value);
@@ -212,23 +359,35 @@ export function execute(source: string, options: ExecutionOptions): ExecutionRes
       }
       return combine(set(left, expr.left), set(right, expr.right), expr.op, expr);
     }
+    // Unbound named calls retain the trusted embedding host's built-in dispatch hook.
+    const callee: Value =
+      expr.callee.kind === 'variable' && !scope.owner(expr.callee.name)
+        ? { kind: 'builtin', name: expr.callee.name }
+        : ev(expr.callee);
     const args = expr.args.map(ev);
+    if (tagged(callee, 'function')) return callFunction(callee, args, expr);
+    if (!tagged(callee, 'builtin')) return problem(expr.callee, 'This value is not callable.');
+    const name = callee.name;
+
     const arity = (count: number) => {
       if (args.length !== count)
         fail(
           source,
           expr,
           'arguments',
-          `${expr.name} expects ${count} argument${count === 1 ? '' : 's'}.`,
+          `${name} expects ${count} argument${count === 1 ? '' : 's'}.`,
         );
     };
-    switch (expr.name) {
+    if (primitiveNames.includes(name))
+      return bounded(primitive(name, args, source, expr, limits, tick), expr);
+    switch (name) {
       case 'COUNT': {
         arity(1);
         const value = args[0];
         if (value instanceof Set) return bounded(BigInt(value.size), expr);
-        if (Array.isArray(value)) return bounded(BigInt(value.length), expr);
-        return problem(expr, 'COUNT expects a recipient set, MEMBERS, or MESSAGES.');
+        if (value !== undefined && tagged(value, 'list'))
+          return bounded(BigInt(value.items.length), expr);
+        return problem(expr, 'COUNT expects a list, recipient set, MEMBERS, or MESSAGES.');
       }
       case 'CONTAINS': {
         arity(2);
@@ -245,14 +404,54 @@ export function execute(source: string, options: ExecutionOptions): ExecutionRes
         tick(expr, integerCost(value) + (typeof value === 'string' ? value.length : 0));
         return bounded(String(value), expr);
       }
+      case 'APPEND': {
+        arity(2);
+        const value = args[0]!;
+        if (!tagged(value, 'list')) return problem(expr, 'APPEND expects a list.');
+        // Charge and bound before copying a potentially large list.
+        tick(expr, value.items.length);
+        if (value.items.length >= limits.singCollectionItems)
+          fail(source, expr, 'collection-limit', 'Sing collection is too large.');
+        return list([...value.items, args[1]!], expr);
+      }
+      case 'LENGTH': {
+        arity(1);
+        return bounded(BigInt(text(args[0]!, expr).length), expr);
+      }
+      case 'SLICE': {
+        arity(3);
+        const value = text(args[0]!, expr);
+        const start = args[1]!;
+        const end = args[2]!;
+        if (typeof start !== 'bigint' || typeof end !== 'bigint')
+          return problem(expr, 'SLICE bounds expect Int.');
+        if (start < 0n || end < start || end > BigInt(value.length))
+          fail(source, expr, 'index', 'SLICE bounds are out of range.');
+        tick(expr, Number(end - start));
+        return bounded(value.slice(Number(start), Number(end)), expr);
+      }
       default: {
-        const value = host?.call(expr.name, args, expr, services);
-        if (value !== undefined) return bounded(value, expr);
-        return fail(source, expr, 'function', `Unknown function “${expr.name}”.`);
+        const hostArgs = args.map(value => {
+          if (value !== null && typeof value === 'object' && !(value instanceof Set)) {
+            const original = hostOrigins.get(value);
+            if (original !== undefined) return original;
+            return problem(
+              expr,
+              'Host functions cannot receive user-created collections or functions.',
+            );
+          }
+          return value;
+        });
+        const value = host?.call(name, hostArgs, expr, services);
+        if (value !== undefined) return fromHost(value, expr);
+        return fail(source, expr, 'function', `Unknown function “${name}”.`);
       }
     }
   }
-  function run(body: Statement[], scope: Scope): ExecutionResult | undefined {
+  function run(body: Statement[], scope: Scope): Completion | undefined {
+    return nested(body[0] ?? { start: 0, end: 0 }, () => runInner(body, scope));
+  }
+  function runInner(body: Statement[], scope: Scope): Completion | undefined {
     for (const statement of body) {
       tick(statement);
       if (statement.kind === 'let' || statement.kind === 'assign') {
@@ -271,11 +470,49 @@ export function execute(source: string, options: ExecutionOptions): ExecutionRes
             'duplicate-variable',
             `“${statement.name}” is already declared in this scope.`,
           );
-        owner.values.set(statement.name, evaluate(statement.value, scope));
+        const annotation = statement.annotation
+          ? resolveType(statement.annotation, scope)
+          : owner.values.get(statement.name)?.annotation;
+        const value = evaluate(statement.value, scope);
+        if (annotation) checkType(value, annotation, statement.value, statement.name);
+        owner.values.set(statement.name, { value, annotation });
+      } else if (statement.kind === 'type') {
+        if (
+          primitiveTypes.has(statement.name) ||
+          statement.name === 'List' ||
+          scope.types.has(statement.name)
+        )
+          fail(
+            source,
+            statement,
+            'duplicate-type',
+            `Type “${statement.name}” is already declared or reserved.`,
+          );
+        scope.types.set(statement.name, resolveType(statement.value, scope));
+      } else if (statement.kind === 'func') {
+        if (scope.values.has(statement.name))
+          fail(
+            source,
+            statement,
+            'duplicate-variable',
+            `“${statement.name}” is already declared in this scope.`,
+          );
+        const value: FunctionValue = {
+          kind: 'function',
+          name: statement.name,
+          body: statement.body,
+          environment: scope,
+          parameters: statement.parameters.map(parameter => ({
+            ...parameter,
+            resolved: parameter.annotation ? resolveType(parameter.annotation, scope) : undefined,
+          })),
+          resultType: statement.annotation ? resolveType(statement.annotation, scope) : undefined,
+        };
+        scope.values.set(statement.name, { value });
+      } else if (statement.kind === 'expression') {
+        evaluate(statement.value, scope);
       } else if (statement.kind === 'return') {
         const value = evaluate(statement.value, scope);
-        if (value !== null && typeof value === 'object')
-          return problem(statement, 'RETURN expects a scalar value.');
         return { kind: 'return', value };
       } else if (statement.kind === 'ping') {
         const recipients = [...set(evaluate(statement.recipients, scope), statement.recipients)];
@@ -299,19 +536,21 @@ export function execute(source: string, options: ExecutionOptions): ExecutionRes
         }
       } else if (statement.kind === 'for') {
         const value = evaluate(statement.collection, scope);
-        let records: RecordValue[];
+        let records: readonly Value[];
         if (value instanceof Set)
-          records = host?.records(value, statement, services) ?? unavailable(statement);
-        else if (Array.isArray(value)) records = value;
+          records = (host?.records(value, statement, services) ?? unavailable(statement)).map(
+            record => fromHost(record, statement),
+          );
+        else if (tagged(value, 'list')) records = value.items;
         else
           return problem(
             statement.collection,
-            'FOR expects a recipient set, MEMBERS, or MESSAGES.',
+            'FOR expects a list, recipient set, MEMBERS, or MESSAGES.',
           );
         for (const record of records) {
           tick(statement);
           const child = new Scope(scope);
-          child.values.set(statement.name, record);
+          child.values.set(statement.name, { value: record });
           const plan = run(statement.body, child);
           if (plan) return plan;
         }
@@ -319,7 +558,19 @@ export function execute(source: string, options: ExecutionOptions): ExecutionRes
     }
     return undefined;
   }
-  const plan = run(statements, new Scope());
+  let plan: Completion | undefined;
+  try {
+    const root = new Scope();
+    for (const [name, value] of Object.entries(options.globals ?? {})) {
+      if (value !== null && !['string', 'number', 'bigint', 'boolean'].includes(typeof value))
+        throw new Error('Sing globals must be scalar values.');
+      root.values.set(name, { value: bounded(value, { start: 0, end: 0 }) });
+    }
+    plan = run(statements, root);
+  } catch (error) {
+    if (!(error instanceof PingSignal)) throw error;
+    plan = error.completion;
+  }
   if (!plan)
     fail(
       source,
@@ -327,5 +578,8 @@ export function execute(source: string, options: ExecutionOptions): ExecutionRes
       'missing-result',
       'The script finished without a result. End with RETURN value or PING selection SAYING "message".',
     );
-  return plan;
+  if (plan.kind === 'ping') return plan;
+  if (plan.value !== null && typeof plan.value === 'object')
+    return problem({ start: 0, end: source.length }, 'Top-level RETURN expects a scalar value.');
+  return { kind: 'return', value: plan.value };
 }

@@ -3,11 +3,22 @@ import type { Span } from './diagnostics.js';
 import type { NameLookup } from './types.js';
 
 const keywords = new Set(
-  'RETURN PING SAYING LET IF THEN ELSE END WHILE DO FOR IN AND OR XOR NOT TRUE FALSE NULL NONE CALLER MEMBERS MESSAGES COUNT MEMBER ROLE JOINED_AFTER CONTAINS TEXT'.split(
+  'RETURN PING SAYING LET IF THEN ELSE END WHILE DO FOR IN FUNC TYPE AND OR XOR NOT TRUE FALSE NULL NONE CALLER MEMBERS MESSAGES COUNT MEMBER ROLE JOINED_AFTER CONTAINS TEXT APPEND LENGTH SLICE INT CHAR_CODE CHAR ERROR'.split(
     ' ',
   ),
 );
 const keyword = (word: string) => word.replace(/[a-z]/g, letter => letter.toUpperCase());
+
+export type TypeExpr = Span &
+  (
+    | { kind: 'named'; name: string }
+    | { kind: 'list'; element: TypeExpr }
+    | { kind: 'record'; fields: { name: string; type: TypeExpr }[] }
+  );
+export interface Parameter extends Span {
+  name: string;
+  annotation?: TypeExpr;
+}
 
 interface Token extends Span {
   kind: string;
@@ -21,12 +32,24 @@ export type Expr = Span &
     | { kind: 'variable'; name: string }
     | { kind: 'unary'; op: string; value: Expr }
     | { kind: 'binary'; op: string; left: Expr; right: Expr }
-    | { kind: 'call'; name: string; args: Expr[] }
+    | { kind: 'call'; callee: Expr; args: Expr[] }
+    | { kind: 'list'; items: Expr[] }
+    | { kind: 'record'; fields: { name: string; value: Expr }[] }
+    | { kind: 'index'; value: Expr; index: Expr }
     | { kind: 'field'; value: Expr; field: string }
   );
 export type Statement = Span &
   (
-    | { kind: 'let' | 'assign'; name: string; value: Expr }
+    | { kind: 'let' | 'assign'; name: string; value: Expr; annotation?: TypeExpr }
+    | {
+        kind: 'func';
+        name: string;
+        parameters: Parameter[];
+        annotation?: TypeExpr;
+        body: Statement[];
+      }
+    | { kind: 'type'; name: string; value: TypeExpr }
+    | { kind: 'expression'; value: Expr }
     | { kind: 'ping'; recipients: Expr; message: Expr }
     | { kind: 'return'; value: Expr }
     | { kind: 'if'; condition: Expr; yes: Statement[]; no: Statement[] }
@@ -106,7 +129,7 @@ function lex(source: string, names: NameLookup): Token[] {
         add('reference', start, value);
         continue;
       }
-      const audience = source.slice(i).match(/^(?:everyone|here)(?=$|[\s;+\-()=<>!,"#@])/);
+      const audience = source.slice(i).match(/^(?:everyone|here)(?=$|[\s;+\-()=<>!,"#@{}[\]:])/);
       if (audience) {
         i += audience[0].length;
         add('audience', start, audience[0]);
@@ -114,7 +137,7 @@ function lex(source: string, names: NameLookup): Token[] {
       }
       const nameStart = i;
       while (i < source.length) {
-        if (/[\n\r;+\-()=<>!,"#@]/u.test(source[i]!)) break;
+        if (/[\n\r;+\-()=<>!,"#@{}[\]:]/u.test(source[i]!)) break;
         const word = source.slice(i).match(/^[\p{L}_][\p{L}\p{M}\p{N}_]*/u)?.[0];
         if ((i === nameStart || /\s/u.test(source[i - 1]!)) && word && keywords.has(keyword(word)))
           break;
@@ -153,7 +176,7 @@ function lex(source: string, names: NameLookup): Token[] {
       add('number', start);
       continue;
     }
-    const operator = source.slice(i).match(/^(?:==|!=|<=|>=|[+\-()=<>.,])/)?.[0];
+    const operator = source.slice(i).match(/^(?:==|!=|<=|>=|[+\-()=<>.,{}[\]:])/)?.[0];
     if (operator) {
       i += operator.length;
       add(operator, start);
@@ -214,6 +237,80 @@ export function parse(source: string, names: NameLookup, depthLimit: number): St
       depth--;
     }
   };
+  function unique(identifiers: string[], span: Span) {
+    if (new Set(identifiers).size !== identifiers.length)
+      fail(source, span, 'duplicate-name', 'Duplicate field or parameter name.');
+  }
+  function fieldName(): string {
+    const token = take();
+    if (token.kind !== 'identifier' && token.kind !== 'string')
+      fail(source, token, 'syntax', 'Expected a field name or quoted string.');
+    return token.text;
+  }
+  function commaList<T>(end: string, item: () => T): T[] {
+    const items: T[] = [];
+    soft();
+    while (!is(end)) {
+      items.push(item());
+      soft();
+      if (!is(',')) break;
+      take();
+      soft();
+    }
+    return items;
+  }
+  function typeExpression(): TypeExpr {
+    return nested(() => {
+      soft();
+      const token = take();
+      if (token.kind === '{') {
+        grouping++;
+        const fields = commaList('}', () => {
+          const name = fieldName();
+          expect(':');
+          return { name, type: typeExpression() };
+        });
+        unique(
+          fields.map(field => field.name),
+          token,
+        );
+        const end = expect('}').end;
+        grouping--;
+        return { ...token, end, kind: 'record', fields };
+      }
+      if (token.kind !== 'identifier' && token.kind !== 'NULL' && token.kind !== 'INT')
+        return fail(source, token, 'syntax', 'Expected a type name.');
+      if (token.text === 'List') {
+        expect('<');
+        grouping++;
+        const element = typeExpression();
+        soft();
+        const end = expect('>').end;
+        grouping--;
+        return { ...token, end, kind: 'list', element };
+      }
+      return {
+        ...token,
+        kind: 'named',
+        name: token.kind === 'NULL' ? 'Null' : token.kind === 'INT' ? 'Int' : token.text,
+      };
+    });
+  }
+  function annotation(): TypeExpr | undefined {
+    if (!is(':')) return undefined;
+    take();
+    return typeExpression();
+  }
+  function braced(): Statement[] {
+    expect('{');
+    // Statement newlines stay significant even inside a surrounding call or list.
+    const outerGrouping = grouping;
+    grouping = 0;
+    const body = block(['}']);
+    expect('}', 'Missing } for block.');
+    grouping = outerGrouping;
+    return body;
+  }
   function expression(min = 0): Expr {
     return nested(() => {
       soft();
@@ -255,6 +352,26 @@ export function parse(source: string, names: NameLookup, depthLimit: number): St
         soft();
         expect(')');
         grouping--;
+      } else if (token.kind === '[') {
+        grouping++;
+        const items = commaList(']', () => expression());
+        const end = expect(']').end;
+        grouping--;
+        left = { ...token, end, kind: 'list', items };
+      } else if (token.kind === '{') {
+        grouping++;
+        const fields = commaList('}', () => {
+          const name = fieldName();
+          expect(':');
+          return { name, value: expression() };
+        });
+        unique(
+          fields.map(field => field.name),
+          token,
+        );
+        const end = expect('}').end;
+        grouping--;
+        left = { ...token, end, kind: 'record', fields };
       } else if (
         token.kind === 'identifier' ||
         [
@@ -268,26 +385,17 @@ export function parse(source: string, names: NameLookup, depthLimit: number): St
           'JOINED_AFTER',
           'CONTAINS',
           'TEXT',
+          'APPEND',
+          'LENGTH',
+          'SLICE',
+          'INT',
+          'CHAR_CODE',
+          'CHAR',
+          'ERROR',
         ].includes(token.kind)
       ) {
         const name = token.kind === 'identifier' ? token.text : token.kind;
-        if (is('(')) {
-          take();
-          grouping++;
-          soft();
-          const args: Expr[] = [];
-          if (!is(')')) {
-            for (;;) {
-              args.push(expression());
-              soft();
-              if (!is(',')) break;
-              take();
-            }
-          }
-          const end = expect(')').end;
-          grouping--;
-          left = { ...token, end, kind: 'call', name, args };
-        } else left = { ...token, kind: 'variable', name };
+        left = { ...token, kind: 'variable', name };
       } else
         return fail(
           source,
@@ -297,6 +405,25 @@ export function parse(source: string, names: NameLookup, depthLimit: number): St
         );
       while (true) {
         soft();
+        if (is('(')) {
+          take();
+          grouping++;
+          const args = commaList(')', () => expression());
+          const end = expect(')').end;
+          grouping--;
+          left = { start: left.start, end, kind: 'call', callee: left, args };
+          continue;
+        }
+        if (is('[')) {
+          take();
+          grouping++;
+          const index = expression();
+          soft();
+          const end = expect(']').end;
+          grouping--;
+          left = { start: left.start, end, kind: 'index', value: left, index };
+          continue;
+        }
         if (is('.')) {
           take();
           const field = expect('identifier', 'Expected a record field after the dot.');
@@ -324,8 +451,11 @@ export function parse(source: string, names: NameLookup, depthLimit: number): St
       const result: Statement[] = [];
       separators();
       while (!is('eof') && !stops.includes(current().kind)) {
-        result.push(statement());
-        if (!is('eof') && !stops.includes(current().kind) && !is('separator'))
+        const item = statement();
+        result.push(item);
+        const closedBlock =
+          ['func', 'if', 'while', 'for'].includes(item.kind) && tokens[at - 1]!.kind === '}';
+        if (!closedBlock && !is('eof') && !stops.includes(current().kind) && !is('separator'))
           fail(
             source,
             current(),
@@ -340,7 +470,39 @@ export function parse(source: string, names: NameLookup, depthLimit: number): St
   function statement(): Statement {
     const token = take();
     const span = () => ({ start: token.start, end: tokens[at - 1]!.end });
-    if (token.kind === 'LET' || token.kind === 'identifier') {
+    if (token.kind === 'FUNC') {
+      const name = expect('identifier', 'Expected a function name after FUNC.').text;
+      expect('(');
+      grouping++;
+      const parameters = commaList(')', (): Parameter => {
+        const parameter = expect('identifier', 'Expected a parameter name.');
+        return { ...parameter, name: parameter.text, annotation: annotation() };
+      });
+      expect(')');
+      grouping--;
+      unique(
+        parameters.map(parameter => parameter.name),
+        token,
+      );
+      const resultType = annotation();
+      let body: Statement[];
+      if (is('{')) body = braced();
+      else {
+        expect('DO', 'Expected { or DO for a function body.');
+        body = block(['END']);
+        expect('END', 'Missing END for FUNC.');
+      }
+      return { ...span(), kind: 'func', name, parameters, annotation: resultType, body };
+    }
+    if (token.kind === 'TYPE') {
+      const name = is('INT')
+        ? (take(), 'Int')
+        : expect('identifier', 'Expected a type alias name.').text;
+      expect('=');
+      const value = typeExpression();
+      return { ...span(), kind: 'type', name, value };
+    }
+    if (token.kind === 'LET' || (token.kind === 'identifier' && is('='))) {
       const name =
         token.kind === 'LET'
           ? expect(
@@ -348,9 +510,16 @@ export function parse(source: string, names: NameLookup, depthLimit: number): St
               'Expected a variable name after LET; keywords are reserved regardless of case.',
             ).text
           : token.text;
+      const declaredType = token.kind === 'LET' ? annotation() : undefined;
       expect('=', 'Expected = for assignment.');
       const value = expression();
-      return { ...span(), kind: token.kind === 'LET' ? 'let' : 'assign', name, value };
+      return {
+        ...span(),
+        kind: token.kind === 'LET' ? 'let' : 'assign',
+        name,
+        value,
+        annotation: declaredType,
+      };
     }
     if (token.kind === 'RETURN') {
       const value = expression();
@@ -364,6 +533,18 @@ export function parse(source: string, names: NameLookup, depthLimit: number): St
     }
     if (token.kind === 'IF') {
       const condition = expression();
+      if (is('{')) {
+        const yes = braced();
+        // Allow ELSE on the following line without consuming the next statement's separator.
+        const after = at;
+        separators();
+        let no: Statement[] = [];
+        if (is('ELSE')) {
+          take();
+          no = braced();
+        } else at = after;
+        return { ...span(), kind: 'if', condition, yes, no };
+      }
       expect('THEN');
       const yes = block(['ELSE', 'END']);
       let no: Statement[] = [];
@@ -376,26 +557,33 @@ export function parse(source: string, names: NameLookup, depthLimit: number): St
     }
     if (token.kind === 'WHILE') {
       const condition = expression();
-      expect('DO');
-      const body = block(['END']);
-      expect('END', 'Missing END for WHILE.');
+      const body = is('{') ? braced() : legacyBody('WHILE');
       return { ...span(), kind: 'while', condition, body };
     }
     if (token.kind === 'FOR') {
       const name = expect('identifier').text;
       expect('IN');
       const collection = expression();
-      expect('DO');
-      const body = block(['END']);
-      expect('END', 'Missing END for FOR.');
+      const body = is('{') ? braced() : legacyBody('FOR');
       return { ...span(), kind: 'for', name, collection, body };
     }
-    return fail(
-      source,
-      token,
-      'statement',
-      'Expected LET, IF, FOR, WHILE, an assignment, RETURN, or PING.',
-    );
+    at--;
+    const value = expression();
+    if (is('='))
+      fail(
+        source,
+        current(),
+        'immutable',
+        'Lists and records are immutable; assign a new value to a variable.',
+      );
+    return { ...span(), kind: 'expression', value };
   }
+  function legacyBody(kind: string): Statement[] {
+    expect('DO');
+    const body = block(['END']);
+    expect('END', `Missing END for ${kind}.`);
+    return body;
+  }
+
   return block([]);
 }
