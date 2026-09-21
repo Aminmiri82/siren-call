@@ -1,7 +1,7 @@
 {
   "name": "siren-call",
   "version": "1.0.0",
-  "description": "Lua and Sing Discord audience selection",
+  "description": "A Discord bot for pinging people with arithmetic, scripted in Sing or Lua",
   "scripts": {
     "build": "tsc && cp src/languages/lua/runtime.lua dist/languages/lua/runtime.lua && cp compiler/compiler.sing dist/compiler/compiler.sing",
     "start": "node --env-file-if-exists=.env dist/discord/bot.js",
@@ -21,9 +21,14 @@
     "type": "git",
     "url": "git+https://github.com/Aminmiri82/siren-call.git"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "discord",
+    "bot",
+    "sing",
+    "lua"
+  ],
+  "author": "Yara Miri",
+  "license": "MIT",
   "type": "module",
   "bugs": {
     "url": "https://github.com/Aminmiri82/siren-call/issues"

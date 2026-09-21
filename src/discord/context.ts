@@ -93,7 +93,7 @@ export function toCompileContext(
 
 export async function snapshot(interaction: Interaction): Promise<ChannelSnapshot> {
   if (!interaction.inGuild() || interaction.guildId !== guildId || !interaction.channelId) {
-    throw new Error('Use this command in the configured test server.');
+    throw new Error('/ping isn’t set up for this server.');
   }
   const guild = await interaction.client.guilds.fetch(interaction.guildId);
   const channel = await guild.channels.fetch(interaction.channelId, { force: true });
@@ -104,9 +104,7 @@ export async function snapshot(interaction: Interaction): Promise<ChannelSnapsho
     channel.type === ChannelType.GuildVoice ||
     channel.type === ChannelType.GuildStageVoice
   ) {
-    throw new Error(
-      'Use /ping in a normal text or announcement channel. Threads and voice channels are not supported yet.',
-    );
+    throw new Error('/ping works in text and announcement channels, not threads or voice.');
   }
   // Fetch roles and members, rather than treating a partial cache as everyone.
   await guild.roles.fetch();
@@ -120,9 +118,10 @@ export async function snapshot(interaction: Interaction): Promise<ChannelSnapsho
   const required = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages];
   let sendProblem: string | undefined;
   if (!callerPermissions.has(required) || caller.isCommunicationDisabled()) {
-    sendProblem = 'You cannot send messages in this channel.';
+    sendProblem = 'You can’t send messages in this channel.';
   } else if (!botPermissions.has(required) || bot.isCommunicationDisabled()) {
-    sendProblem = 'The bot needs View Channel and Send Messages here and must not be timed out.';
+    sendProblem =
+      'Siren Call can’t send messages here. It needs View Channel and Send Messages, and must not be timed out.';
   }
   return {
     context: toCompileContext(

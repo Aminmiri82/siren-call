@@ -105,10 +105,10 @@ export function permissionProblem(
   context: CompileContext,
   canMentionEveryone: boolean,
 ): string | undefined {
-  if (!plan.recipients.length) return 'No eligible recipients matched.';
+  if (!plan.recipients.length) return 'No matches found.';
   const selected = new Set(plan.recipients);
   if (!canMentionEveryone && context.members.every(member => selected.has(member.id))) {
-    return 'This selects everyone who can view this channel. You need Mention Everyone in this channel to send it.';
+    return 'This would ping everyone in the channel, which needs the "Mention Everyone" permission.';
   }
 }
 

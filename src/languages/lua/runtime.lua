@@ -76,7 +76,7 @@ local env = {
   intersection=function(a,b) return combine(a,b,'intersection') end,
   difference=function(a,b) return combine(a,b,'difference') end,
 }
--- Bare `Teachers` or `raphe22` names a role or member. Unmatched globals stay nil, so a typo
+-- Bare `Teachers` or `zoe42` names a role or member. Unmatched globals stay nil, so a typo
 -- still fails as a nil value rather than as a confusing lookup error.
 setmetatable(env, {__index = function(_, key)
   if type(key) ~= 'string' then return nil end

@@ -26,9 +26,9 @@ const context: CompileContext = {
     },
     {
       id: '3',
-      name: 'chèvre',
-      username: 'raphe22',
-      globalName: 'Raphaël',
+      name: 'Zoë',
+      username: 'zoe42',
+      globalName: 'Zoë Fairweather',
       roleIds: ['20'],
       joinedAt: '2026-09-01T00:00:00.000Z',
     },
@@ -37,7 +37,7 @@ const context: CompileContext = {
     {
       id: '900',
       authorId: '3',
-      authorName: 'chèvre',
+      authorName: 'Zoë',
       bot: false,
       content: 'hello class',
       createdAt: '2026-09-19T09:00:00.000Z',
@@ -106,7 +106,7 @@ describe('Sing names and set expressions', () => {
   it('longest-matches multiword names, aliases and normalized Unicode', async () => {
     expect(await recipients('@Teachers - @John Doe')).toEqual(['1']);
     expect(await recipients('@Café crew')).toEqual(['2', '3']);
-    for (const name of ['chèvre', 'CHEVRE', 'che\u0300vre', 'raphe22', 'Raphaël']) {
+    for (const name of ['Zoë', 'ZOE', 'Zoe\u0308', 'zoe42', 'Zoë Fairweather']) {
       expect(await recipients('@' + name)).toEqual(['3']);
     }
     expect(await recipients('@"Teachers saying hello"')).toEqual(['2']);

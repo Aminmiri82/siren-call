@@ -53,8 +53,8 @@ it('withholds presence entirely when the intent is unavailable, rather than gues
 it('copies the name aliases, roles and join date that selection depends on', () => {
   const member = {
     id: '7',
-    displayName: 'chèvre',
-    user: { bot: false, username: 'raphe22', globalName: 'Raphaël' },
+    displayName: 'Zoë',
+    user: { bot: false, username: 'zoe42', globalName: 'Zoë Fairweather' },
     roles: { cache: new Map([['10', {}]]) },
     joinedAt: new Date('2026-09-01T00:00:00.000Z'),
     presence: null,
@@ -64,9 +64,9 @@ it('copies the name aliases, roles and join date that selection depends on', () 
   expect(context.members).toEqual([
     {
       id: '7',
-      name: 'chèvre',
-      username: 'raphe22',
-      globalName: 'Raphaël',
+      name: 'Zoë',
+      username: 'zoe42',
+      globalName: 'Zoë Fairweather',
       roleIds: ['10'],
       joinedAt: '2026-09-01T00:00:00.000Z',
       presence: null,
@@ -114,10 +114,10 @@ it('names who is blocked when the author or the bot cannot send here', async () 
   const guild = createGuild();
   guild.members[0]!.canSend = false;
   const author = createInteraction(guild, { userId: '1' });
-  expect((await snapshot(author.interaction)).sendProblem).toContain('You cannot send messages');
+  expect((await snapshot(author.interaction)).sendProblem).toContain('You can’t send messages');
   guild.members[0]!.canSend = true;
   guild.bot.canView = false;
-  expect((await snapshot(author.interaction)).sendProblem).toContain('The bot needs');
+  expect((await snapshot(author.interaction)).sendProblem).toContain('Siren Call can’t send');
 });
 
 it('reports Mention Everyone from the author’s channel permissions', async () => {
@@ -133,10 +133,10 @@ it.each([
   ['a channel it cannot fetch', createGuild(), { channelId: 'somewhere-else' }],
 ])('refuses to build a plan for %s', async (_case, guild, options) => {
   const { interaction } = createInteraction(guild, { userId: '1', ...options });
-  await expect(snapshot(interaction)).rejects.toThrow('Threads and voice channels are not');
+  await expect(snapshot(interaction)).rejects.toThrow('not threads or voice');
 });
 
 it('refuses any guild but the configured one', async () => {
   const { interaction } = createInteraction(createGuild(), { userId: '1', guildId: 'elsewhere' });
-  await expect(snapshot(interaction)).rejects.toThrow('configured test server');
+  await expect(snapshot(interaction)).rejects.toThrow('isn’t set up for this server');
 });

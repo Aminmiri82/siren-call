@@ -59,7 +59,7 @@ it('sends exactly the previewed recipients as user mentions', async () => {
   const batch = guild.sent[0]!;
   expect(batch.allowedMentions).toEqual({ parse: [], users: ['1', '2'], repliedUser: false });
   expect(batch.content).toBe('Roll call\n\n<@1> <@2>');
-  expect(clicker.latest().content).toBe('Sent 1 message mentioning 2 people.');
+  expect(clicker.latest().content).toBe('Pinged 2 people.');
   expect(payload.content).toContain('Ping 2 people?');
 });
 
@@ -67,9 +67,9 @@ it('refuses a preview clicked by another member or from another channel', async 
   const guild = createGuild();
   const { send } = await showPreview(guild, '1', 'PING @Teachers SAYING "Roll call"');
   const stranger = await click(guild, '2', send.custom_id);
-  expect(stranger.latest().content).toContain('Only the author');
+  expect(stranger.latest().content).toContain('Only the person who ran /ping');
   const elsewhere = await click(guild, '1', send.custom_id, 'other-channel');
-  expect(elsewhere.latest().content).toContain('Only the author');
+  expect(elsewhere.latest().content).toContain('Only the person who ran /ping');
   expect(guild.sent).toEqual([]);
   // A rejected click does not consume the preview, so the author can still send it.
   await click(guild, '1', send.custom_id);
@@ -89,7 +89,7 @@ it('cancels a preview without sending anything', async () => {
   const guild = createGuild();
   const { send, cancel } = await showPreview(guild, '1', 'PING @Teachers SAYING "Roll call"');
   const clicker = await click(guild, '1', cancel.custom_id);
-  expect(clicker.latest()).toMatchObject({ content: 'Cancelled. No messages sent.' });
+  expect(clicker.latest()).toMatchObject({ content: 'Cancelled. No messages were sent.' });
   expect(guild.sent).toEqual([]);
   // Cancelling consumes the preview: the send button cannot resurrect it.
   const retry = await click(guild, '1', send.custom_id);
@@ -105,7 +105,7 @@ it('sends once when the same preview is clicked twice', async () => {
   await Promise.all([handleButton(first.interaction), handleButton(second.interaction)]);
   expect(guild.sent).toHaveLength(1);
   const outcomes = [first.latest().content, second.latest().content];
-  expect(outcomes).toContain('Sent 1 message mentioning 2 people.');
+  expect(outcomes).toContain('Pinged 2 people.');
   expect(outcomes.some(content => String(content).includes('already used'))).toBe(true);
 });
 
@@ -114,7 +114,7 @@ it('re-checks permissions at send time and refuses when the author lost them', a
   const { send } = await showPreview(guild, '1', 'PING @Teachers SAYING "Roll call"');
   guild.members[0]!.canSend = false;
   const clicker = await click(guild, '1', send.custom_id);
-  expect(clicker.latest().content).toContain('Cannot send: You cannot send messages');
+  expect(clicker.latest().content).toContain('**Not sent.** You can’t send messages');
   expect(guild.sent).toEqual([]);
 });
 
@@ -123,7 +123,7 @@ it('refuses to send when the bot was timed out after the preview', async () => {
   const { send } = await showPreview(guild, '1', 'PING @Teachers SAYING "Roll call"');
   guild.bot.timedOut = true;
   const clicker = await click(guild, '1', send.custom_id);
-  expect(clicker.latest().content).toContain('Cannot send: The bot needs');
+  expect(clicker.latest().content).toContain('**Not sent.** Siren Call can’t send');
   expect(guild.sent).toEqual([]);
 });
 
@@ -140,7 +140,9 @@ it('drops recipients who became ineligible without adding new matches', async ()
   expect(guild.sent).toHaveLength(1);
   expect(guild.sent[0]!.allowedMentions.users).toEqual(['1', '2']);
   expect(guild.sent[0]!.content).not.toContain('<@4>');
-  expect(clicker.latest().content).toContain('Skipped 1 recipients who are no longer eligible.');
+  expect(clicker.latest().content).toContain(
+    'Skipped 1 person who can no longer see this channel.',
+  );
 });
 
 it('reports a stopped delivery instead of claiming success', async () => {
@@ -149,8 +151,8 @@ it('reports a stopped delivery instead of claiming success', async () => {
   const clicker = await click(guild, '1', send.custom_id);
   expect(guild.sent).toEqual([]);
   const content = String(clicker.latest().content);
-  expect(content).toContain('Delivery stopped after 0 confirmed messages');
-  expect(content).toContain('nothing was retried automatically');
+  expect(content).toContain('Delivery stopped.** 0 messages confirmed');
+  expect(content).toContain('nothing was retried');
 });
 
 it('retires an author’s earlier preview when they preview again', async () => {
@@ -175,6 +177,6 @@ it('refuses a second concurrent script from the same author', async () => {
   const rejected = results.filter(result => result.status === 'rejected');
   expect(rejected).toHaveLength(1);
   expect((rejected[0] as PromiseRejectedResult).reason.message).toContain(
-    'Another script is running',
+    'Another script is still running',
   );
 });

@@ -77,7 +77,7 @@ try {
   if (/not enough memory|out of memory/i.test(raw)) {
     message = 'This script uses too much memory. Try a smaller selection or a simpler loop.';
   }
-  if (message.includes("near '@'")) message += '\nPut names in quotes: member("@raphe22").';
+  if (message.includes("near '@'")) message += '\nPut names in quotes: member("@zoe42").';
   parentPort!.postMessage({ error: message.slice(0, 1500) });
 } finally {
   engine?.global.close();

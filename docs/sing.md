@@ -11,16 +11,15 @@ compatibility changes, and the abstract core's Turing-completeness argument.
 PING @Teachers - @John Doe SAYING "Class is cancelled"
 ```
 
-Choose `/ping language:Sing`, or run a local fixture:
+Sing is the bot's default language: `/ping` opens its editor. You can also run a script against a
+local fixture:
 
 ```sh
 pnpm run preview examples/class.sing examples/context.json sing
 ```
 
-The result is one recipient set and one message. The bot still validates it, checks permissions,
-shows a private preview, and waits for Send ping. Sing never sends messages during evaluation.
-Sing is the default language. Existing installations must run `pnpm run register` to expose
-the new language choice in Discord.
+The result is one recipient set and one message. The bot validates it, checks permissions,
+shows a private preview, and waits for **Send**. Sing never sends messages during evaluation.
 
 ## Names
 
@@ -117,9 +116,8 @@ Comparisons are binary; write `x > 0 AND x < 10`, not `0 < x < 10`.
 Whole-number literals are arbitrary-precision exact integers; decimal literals (such as `1.0`)
 are finite binary64 floating-point values. Both support `+`, `-`, and comparisons within their
 own kind. `COUNT` returns an integer. Mixed integer/decimal arithmetic and ordering are errors;
-`1 == 1.0` is false, without implicit conversion. This differs from the previous all-floating-point
-implementation. Use `(x + 1) > 2` for arithmetic comparisons: legacy comparison precedence is
-higher than `+`/`-`. Strings support `+` for concatenation, equality,
+`1 == 1.0` is false, without implicit conversion. Use `(x + 1) > 2` for arithmetic comparisons:
+comparison binds tighter than `+`/`-`. Strings support `+` for concatenation, equality,
 and lexicographic comparisons. Ordered comparisons require two numbers or two strings.
 Equality and inequality (`==`, `!=`) compare scalar values without type coercion; they do not
 compare sets or records. Booleans use `TRUE`, `FALSE`, `AND`, `OR`, `XOR`, and `NOT`.
@@ -191,8 +189,8 @@ There is no `BREAK` or `CONTINUE`.
 The first executed `PING` ends evaluation and returns its plan, including from inside a loop
 or branch. The complete source must still parse. Reaching the end without executing `PING`
 is an error. `RETURN` exits a function with a value; at top level it produces a standalone scalar result
-and cannot replace `PING` in a Discord selection script. Variables formerly named `return` must be renamed, and recipient names
-containing that reserved word must be quoted. An empty selection yields a preview that cannot be sent, just as with Lua.
+and cannot replace `PING` in a Discord selection script. An empty selection yields a preview that
+cannot be sent, just as with Lua.
 
 ## Functions, collections, and optional types
 
@@ -225,8 +223,8 @@ Types are `Int`, `Decimal`, `String`, `Bool`, `Null`, `List<T>`, and record shap
 non-recursive alias before use. Checks happen at runtime on initialization, assignment,
 arguments, and returns. There is no static checker or implicit conversion.
 
-`FUNC`, `TYPE`, `APPEND`, `LENGTH`, and `SLICE` are newly reserved words; quote recipient names
-containing them. Semicolons remain optional when a newline separates statements. Closing block
+`FUNC`, `TYPE`, `APPEND`, `LENGTH`, and `SLICE` are reserved words; quote recipient names
+containing them. Semicolons are optional when a newline separates statements. Closing block
 braces can separate statements by themselves. See the [specification](sing-spec.md) and
 [runnable example](../examples/functions.sing) for the full rules.
 
@@ -270,9 +268,8 @@ must be exact integers and in range. These built-ins work in both standalone and
 
 `INT(string)` parses signed decimal digits exactly. `CHAR_CODE(string)` returns the code of
 one UTF-16 unit; `CHAR(integer)` converts a value from 0 to 65535 into that unit. `ERROR(string)`
-stops execution with the supplied diagnostic. These four built-ins are newly reserved in every
-capitalization; quote colliding recipient names and rename colliding variables. `Int` remains
-available in type annotations.
+stops execution with the supplied diagnostic. These four built-ins are reserved in every
+capitalization; quote colliding recipient names. `Int` is still available in type annotations.
 
 `TEXT(TRUE)`, `TEXT(FALSE)`, and `TEXT(NULL)` produce `"true"`, `"false"`, and `"null"`.
 Records and collections cannot be converted with `TEXT`. Sing has no filesystem, network,

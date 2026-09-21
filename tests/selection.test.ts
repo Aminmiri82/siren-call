@@ -15,9 +15,9 @@ const context: CompileContext = {
     { id: '102', name: 'Both roles', roleIds: ['10', '20'], joinedAt: '2026-09-01T00:00:00.000Z' },
     {
       id: '103',
-      name: 'chèvre',
-      username: 'raphe22',
-      globalName: 'Raphaël',
+      name: 'Zoë',
+      username: 'zoe42',
+      globalName: 'Zoë Fairweather',
       roleIds: ['20'],
       joinedAt: '2026-09-01T00:00:00.000Z',
     },
@@ -27,7 +27,7 @@ const context: CompileContext = {
     {
       id: '9001',
       authorId: '103',
-      authorName: 'chèvre',
+      authorName: 'Zoë',
       bot: false,
       content: 'is the class still on?',
       createdAt: '2026-09-19T09:00:00.000Z',
@@ -78,7 +78,7 @@ function selectionContract(
     it('treats an empty result as a no-op and rejects unknown recipients', async () => {
       const empty = validatePlan(await language.compile(scripts.empty, context), context);
       expect(batches(empty)).toEqual([]);
-      expect(permissionProblem(empty, context, true)).toContain('No eligible');
+      expect(permissionProblem(empty, context, true)).toContain('No matches found');
       await expect(
         language.compile(scripts.invalid, context).then(plan => validatePlan(plan, context)),
       ).rejects.toThrow();
@@ -97,19 +97,19 @@ selectionContract(lua, {
     '103',
     '<@103>',
     '<@!103>',
-    'raphe22',
-    '@raphe22',
-    'chèvre',
-    'chévre',
-    'chevre',
-    'CHEVRE',
-    'che\u0300vre',
-    'Raphaël',
+    'zoe42',
+    '@zoe42',
+    'Zoë',
+    'Zoé',
+    'Zoe',
+    'ZOE',
+    'Zoe\u0308',
+    'Zoë Fairweather',
   ]
     .map(
       reference => `return { recipients = everyone() - member("${reference}"), message = "Hello" }`,
     )
-    .concat('return { recipients = everyone() - raphe22, message = "Hello" }'),
+    .concat('return { recipients = everyone() - zoe42, message = "Hello" }'),
   ambiguous: 'return { recipients = member("Both roles"), message = "Hello" }',
 });
 
@@ -122,17 +122,17 @@ selectionContract(new SingSelectionLanguage(), {
     '103',
     '<@103>',
     '<@!103>',
-    'raphe22',
-    '@raphe22',
-    'chèvre',
-    'chévre',
-    'chevre',
-    'CHEVRE',
-    'che\u0300vre',
-    'Raphaël',
+    'zoe42',
+    '@zoe42',
+    'Zoë',
+    'Zoé',
+    'Zoe',
+    'ZOE',
+    'Zoe\u0308',
+    'Zoë Fairweather',
   ]
     .map(reference => `PING @everyone - MEMBER(${JSON.stringify(reference)}) SAYING "Hello"`)
-    .concat('PING @everyone - @chèvre SAYING "Hello"'),
+    .concat('PING @everyone - @Zoë SAYING "Hello"'),
   ambiguous: 'PING @Both roles SAYING "Hello"',
 });
 
@@ -209,7 +209,7 @@ it('stops a Lua script that tries to exhaust memory', async () => {
 
 it('reports a Lua syntax error by line, and explains an unquoted name', async () => {
   await expect(lua.compile('return {', context)).rejects.toThrow(/^Line 1:/);
-  await expect(lua.compile('return { recipients = @raphe22 }', context)).rejects.toThrow(
+  await expect(lua.compile('return { recipients = @zoe42 }', context)).rejects.toThrow(
     'Put names in quotes',
   );
 });
@@ -226,7 +226,7 @@ it('resolves bare role and member names, and keeps unmatched globals nil', async
     validatePlan(await lua.compile(source, context), context).recipients.toSorted();
   expect(await run('return { recipients = caller, message = "hi" }')).toEqual(['101']);
   expect(await run('return { recipients = L1 + L2, message = "hi" }')).toEqual(['102', '103']);
-  expect(await run('return { recipients = raphe22, message = "hi" }')).toEqual(['103']);
+  expect(await run('return { recipients = zoe42, message = "hi" }')).toEqual(['103']);
   // A typo is still a nil value, not a member lookup failure.
   await expect(
     lua.compile('return { recipients = everyon(), message = "hi" }', context),
@@ -238,7 +238,7 @@ it('exposes recent channel messages to the script', async () => {
     for _, m in ipairs(messages) do lines[#lines+1] = m.authorName..": "..m.content end
     return { recipients = {}, message = table.concat(lines, " | ").." /"..tostring(messages[2].bot) }`;
   const plan = await lua.compile(source, context);
-  expect(plan.message).toBe('chèvre: is the class still on? | Yara: asking now /true');
+  expect(plan.message).toBe('Zoë: is the class still on? | Yara: asking now /true');
 });
 
 it('requires Mention Everyone for a full audience regardless of how IDs were selected', () => {

@@ -8,7 +8,7 @@ import {
 } from 'discord.js';
 import type { InteractionEditReplyOptions } from 'discord.js';
 import { language } from '../languages/index.js';
-import { batches } from '../selection.js';
+import { batches, limits } from '../selection.js';
 import type { CompileContext, PingPlan } from '../selection.js';
 
 const PREVIEW_NAMES = 12;
@@ -49,23 +49,23 @@ export function previewMessage(
   const names = shown.map(id => context.members.find(member => member.id === id)!.name).join(', ');
   const description = [
     `**Ping ${quantity(plan.recipients.length, 'person', 'people')}?**`,
-    names + (extra ? `, +${extra} more` : ''),
-    ...(problem ? [`\n**Can’t send:** ${problem}`] : []),
+    names + (extra ? ` and ${extra} more` : ''),
+    ...(problem ? [`\n**Can’t send.** ${problem}`] : []),
   ].join('\n');
   const count = batches(plan).length;
+  const minutes = Math.round(limits.previewMs / 60_000);
+  const footer = [
+    ...(count > 1 ? [`Sent as ${count} messages`] : []),
+    `Preview expires in ${quantity(minutes, 'minute')}`,
+  ].join(' · ');
   return {
     content: description.slice(0, 1900),
-    embeds: [
-      {
-        description: plan.message,
-        footer: { text: `${count > 1 ? `${count} messages · ` : ''}Expires in 5 minutes` },
-      },
-    ],
+    embeds: [{ description: plan.message, footer: { text: footer } }],
     components: [
       new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
           .setCustomId(`send:${previewId}`)
-          .setLabel('Send ping')
+          .setLabel('Send')
           .setStyle(ButtonStyle.Primary)
           .setDisabled(Boolean(problem)),
         new ButtonBuilder()

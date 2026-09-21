@@ -30,7 +30,7 @@ export async function preview(
 ) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   if (busy.has(interaction.user.id) || busy.size >= MAX_COMPILATIONS) {
-    throw new Error('Another script is running. Try again shortly.');
+    throw new Error('Another script is still running. Try again later.');
   }
   busy.add(interaction.user.id);
   try {
@@ -62,14 +62,14 @@ export async function handleButton(interaction: ButtonInteraction) {
   if (!saved || saved.expires <= Date.now()) {
     previews.delete(previewId);
     await interaction.reply({
-      content: 'This preview expired or was already used. Run /ping again.',
+      content: 'This preview has expired or was already used. Run /ping again.',
       flags: MessageFlags.Ephemeral,
     });
     return;
   }
   if (saved.owner !== interaction.user.id || saved.channel !== interaction.channelId) {
     await interaction.reply({
-      content: 'Only the author can use this preview.',
+      content: 'Only the person who ran /ping can use this preview, and only in that channel.',
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -79,14 +79,14 @@ export async function handleButton(interaction: ButtonInteraction) {
   await interaction.deferUpdate();
   if (action === 'cancel') {
     await interaction.editReply({
-      content: 'Cancelled. No messages sent.',
+      content: 'Cancelled. No messages were sent.',
       embeds: [],
       components: [],
     });
     return;
   }
   await interaction.editReply({
-    content: 'Checking current permissions and recipients…',
+    content: 'Sending…',
     embeds: [],
     components: [],
   });
@@ -97,16 +97,19 @@ export async function handleButton(interaction: ButtonInteraction) {
     state.sendProblem ?? permissionProblem(plan, state.context, state.canMentionEveryone);
   if (problem) {
     await interaction.editReply({
-      content: `Cannot send: ${problem}\nRun /ping again after resolving it.`,
+      content: `**Not sent.** ${problem}\nRun /ping again once that’s fixed.`,
     });
     return;
   }
   const result = await deliver(plan, batch => state.channel.send(batch));
   const removed = saved.plan.recipients.length - plan.recipients.length;
+  const people = quantity(result.sentRecipients, 'person', 'people');
   const outcome = result.complete
-    ? `Sent ${quantity(result.sentMessages, 'message')} mentioning ${quantity(result.sentRecipients, 'person', 'people')}.`
-    : `Delivery stopped after ${result.sentMessages} confirmed messages (${result.sentRecipients} recipients). The failed request may have reached Discord; nothing was retried automatically.`;
-  const skipped = removed ? `\nSkipped ${removed} recipients who are no longer eligible.` : '';
+    ? `Pinged ${people}${result.sentMessages > 1 ? ` in ${quantity(result.sentMessages, 'message')}` : ''}.`
+    : `**Delivery stopped.** ${quantity(result.sentMessages, 'message')} confirmed, reaching ${people}. The one that failed may still have gone through; nothing was retried.`;
+  const skipped = removed
+    ? `\nSkipped ${quantity(removed, 'person', 'people')} who can no longer see this channel.`
+    : '';
   await interaction.editReply({ content: outcome + skipped });
 }
 
