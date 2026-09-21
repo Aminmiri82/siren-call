@@ -232,7 +232,7 @@ PING audience SAYING TEXT(COUNT(audience)) + " MiXeD PING"`;
     expect((await compile('let ıf = caller; ping ıf saying "hi"')).recipients).toEqual(['1']);
   });
 
-  it('requires quotes for keyword words in names regardless of case and preserves error spans', async () => {
+  it('requires quotes for keyword words in names regardless of case', async () => {
     for (const name of [
       'Research and Development',
       'research AnD development',
@@ -245,15 +245,6 @@ PING audience SAYING TEXT(COUNT(audience)) + " MiXeD PING"`;
       'Unknown recipient',
     );
     await expect(compile('ping @if saying "hi"')).rejects.toThrow('Quote names containing syntax');
-    const source = 'ping @Teahcers saying "hi"';
-    try {
-      await compile(source);
-      expect.unreachable('Expected unknown recipient');
-    } catch (error) {
-      const diagnostic = (error as SingError).diagnostic;
-      expect(source.slice(diagnostic.start, diagnostic.end)).toBe('@Teahcers');
-      expect(diagnostic.suggestions).toContain('@"Teachers"');
-    }
   });
 
   it('supports lexical scopes, assignment, loops and early PING', async () => {
@@ -355,17 +346,26 @@ describe('Sing diagnostics and bounds', () => {
   ])('rejects %s with an actionable error', async (source, message) => {
     await expect(compile(source)).rejects.toThrow(message);
   });
-  it('bounds source, nesting, expression depth, strings, loops, and output, then remains usable', async () => {
-    await expect(compile('#' + 'é'.repeat(limits.sourceBytes))).rejects.toThrow('too large');
-    await expect(recipients('('.repeat(150) + 'NONE' + ')'.repeat(150))).rejects.toThrow('nesting');
-    await expect(recipients(Array(150).fill('NONE').join(' + '))).rejects.toThrow('too deep');
-    await expect(compile('LET s = "x"; WHILE TRUE DO s = s + s END')).rejects.toThrow(
-      'string is too large',
-    );
-    await expect(compile('WHILE TRUE DO END')).rejects.toThrow(/step limit|time limit/);
-    await expect(
-      compile(`PING NONE SAYING "${'x'.repeat(limits.messageLength + 1)}"`),
-    ).rejects.toThrow('message must contain');
+  it.each([
+    ['source larger than the limit', '#' + 'é'.repeat(limits.sourceBytes), 'too large'],
+    [
+      'deep nesting',
+      'PING ' + '('.repeat(150) + 'NONE' + ')'.repeat(150) + ' SAYING "hi"',
+      'nesting',
+    ],
+    ['a deep expression', `PING ${Array(150).fill('NONE').join(' + ')} SAYING "hi"`, 'too deep'],
+    ['unbounded string growth', 'LET s = "x"; WHILE TRUE DO s = s + s END', 'string is too large'],
+    ['an endless loop', 'WHILE TRUE DO END', /step limit|time limit/],
+    [
+      'a message longer than Discord allows',
+      `PING NONE SAYING "${'x'.repeat(limits.messageLength + 1)}"`,
+      'message must contain',
+    ],
+  ])('bounds %s', async (_case, source, message) => {
+    await expect(compile(source)).rejects.toThrow(message);
+  });
+
+  it('bounds the audience by the shared recipient limit', async () => {
     const oversized = {
       ...context,
       members: Array.from({ length: limits.recipients + 1 }, (_, i) => ({
@@ -376,17 +376,40 @@ describe('Sing diagnostics and bounds', () => {
       })),
     };
     await expect(compile('PING @everyone SAYING "hi"', oversized)).rejects.toThrow('at most');
+  });
+
+  it('stays usable after a script is refused', async () => {
+    await expect(compile('WHILE TRUE DO END')).rejects.toThrow(/step limit|time limit/);
     expect(await recipients('CALLER')).toEqual(['1']);
   });
 });
 
-it('registers Sing as the default and supplies a matching Discord editor', () => {
-  expect(language('sing').id).toBe('sing');
-  expect(defaultLanguageId).toBe('sing');
-  const modal = JSON.stringify(scriptModal('sing').toJSON());
-  expect(modal).toContain('ping:sing');
-  expect(modal).toContain('Siren Call · Sing');
-  expect(modal).toContain('PING CALLER SAYING');
-  expect(JSON.stringify(scriptModal('lua').toJSON())).toContain('member(caller_id)');
-  expect(() => scriptModal('unknown')).toThrow('Unknown selection language');
+describe('language registry and editor', () => {
+  it('pings in Sing unless another registered language is chosen', () => {
+    expect(defaultLanguageId).toBe('sing');
+    expect(language(defaultLanguageId).id).toBe('sing');
+    expect(language('lua').id).toBe('lua');
+    expect(() => language('python')).toThrow('Unknown selection language');
+  });
+
+  // The modal's custom id is how a submitted script finds its language again, so it is a contract.
+  it.each([
+    ['sing', 'Siren Call · Sing', 'Sing script', 'PING CALLER SAYING'],
+    ['lua', 'Siren Call · Lua', 'Lua script', 'member(caller_id)'],
+  ])('opens a %s editor carrying its language id', (id, title, label, starter) => {
+    const modal = scriptModal(id).toJSON();
+    expect(modal.custom_id).toBe(`ping:${id}`);
+    expect(modal.title).toBe(title);
+    const row = modal.components[0] as unknown as {
+      components: { custom_id: string; label: string; value?: string }[];
+    };
+    const input = row.components[0]!;
+    expect(input.custom_id).toBe('script');
+    expect(input.label).toBe(label);
+    expect(input.value).toContain(starter);
+  });
+
+  it('refuses an editor for an unregistered language', () => {
+    expect(() => scriptModal('python')).toThrow('Unknown selection language');
+  });
 });

@@ -15,11 +15,27 @@ const exec = promisify(execFile);
 const cli = new URL('../dist/sing-cli.js', import.meta.url).pathname;
 const example = new URL('../examples/counter.sing', import.meta.url).pathname;
 
+/** Each CLI case needs its own source file, so the temporary directory is per-test. */
+async function withSourceFile<T>(
+  source: string | Buffer,
+  body: (file: string) => Promise<T>,
+): Promise<T> {
+  const directory = await mkdtemp(join(tmpdir(), 'sing-cli-'));
+  const file = join(directory, 'input.sing');
+  try {
+    await writeFile(file, source);
+    return await body(file);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
 describe('standalone Sing', () => {
-  it('computes exactly beyond binary64 precision, including worker transport', async () => {
+  it('computes exactly beyond binary64 precision', async () => {
     const source = 'RETURN 9007199254740992 + 1';
     expect(run(source)).toEqual({ kind: 'return', value: 9007199254740993n });
-    expect(await runSing(source)).toEqual(run(source));
+    // The worker boundary must not round the result down to a double on the way back.
+    expect(await runSing(source)).toEqual({ kind: 'return', value: 9007199254740993n });
     expect(run('RETURN -9007199254740993 - 1').value).toBe(-9007199254740994n);
     expect(run('RETURN 9007199254740993 > 9007199254740992').value).toBe(true);
     expect(run('RETURN TEXT(9007199254740993)').value).toBe('9007199254740993');
@@ -74,11 +90,20 @@ describe('standalone Sing', () => {
     );
   });
 
-  it('keeps standalone execution isolated and preserves diagnostic spans', async () => {
-    for (const source of ['RETURN require("fs")', 'RETURN process.env', 'PING NONE SAYING "hi"'])
-      await expect(runSing(source)).rejects.toThrow();
+  it.each([
+    ['module loading', 'RETURN require("fs")'],
+    ['host globals', 'RETURN process.env'],
+    ['Discord-only statements', 'PING NONE SAYING "hi"'],
+  ])('denies a standalone script %s', async (_case, source) => {
+    await expect(runSing(source)).rejects.toThrow();
+  });
+
+  it('terminates a runaway standalone script and stays usable', async () => {
     await expect(runSing('WHILE TRUE DO END')).rejects.toThrow(/step limit|time limit/);
     await expect(runSing('RETURN 42')).resolves.toEqual({ kind: 'return', value: 42n });
+  });
+
+  it('carries diagnostic spans across the worker boundary', async () => {
     const source = 'LET café = 1\nRETURN café + 1.0';
     try {
       await runSing(source);
@@ -101,36 +126,31 @@ describe('standalone Sing', () => {
     });
   });
 
-  it('reports CLI source errors and serializes every scalar kind', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'sing-cli-'));
-    const file = join(directory, 'input.sing');
-    try {
-      for (const [expression, expected] of [
-        ['FALSE', { type: 'boolean', value: false }],
-        ['NULL', { type: 'null', value: null }],
-        ['"hello"', { type: 'string', value: 'hello' }],
-        ['1.5', { type: 'decimal', value: 1.5 }],
-        ['0', { type: 'integer', value: '0' }],
-      ] as const) {
-        await writeFile(file, `RETURN ${expression}`);
-        const result = await exec(process.execPath, [cli, '--json', file]);
-        expect(JSON.parse(result.stdout)).toEqual(expected);
-      }
-      for (const [source, diagnostic] of [
-        ['RETURN missing', 'Line 1, column 8'],
-        ['#' + 'x'.repeat(limits.sourceBytes), 'too large'],
-        [Buffer.from([0xff]), 'encoded data'],
-      ] as const) {
-        await writeFile(file, source);
-        await expect(exec(process.execPath, [cli, file])).rejects.toMatchObject({
-          code: 1,
-          stdout: '',
-          stderr: expect.stringContaining(diagnostic),
-        });
-      }
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+  it.each([
+    ['FALSE', { type: 'boolean', value: false }],
+    ['NULL', { type: 'null', value: null }],
+    ['"hello"', { type: 'string', value: 'hello' }],
+    ['1.5', { type: 'decimal', value: 1.5 }],
+    ['0', { type: 'integer', value: '0' }],
+  ])('serializes %s as JSON that keeps its kind', async (expression, expected) => {
+    await withSourceFile(`RETURN ${expression}`, async file => {
+      const result = await exec(process.execPath, [cli, '--json', file]);
+      expect(JSON.parse(result.stdout)).toEqual(expected);
+    });
+  });
+
+  it.each([
+    ['an unknown variable', 'RETURN missing', 'Line 1, column 8'],
+    ['source over the size limit', '#' + 'x'.repeat(limits.sourceBytes), 'too large'],
+    ['bytes that are not text', Buffer.from([0xff]), 'encoded data'],
+  ])('fails with a diagnostic on stderr for %s', async (_case, source, diagnostic) => {
+    await withSourceFile(source, async file => {
+      await expect(exec(process.execPath, [cli, file])).rejects.toMatchObject({
+        code: 1,
+        stdout: '',
+        stderr: expect.stringContaining(diagnostic),
+      });
+    });
   });
 
   it('runs the counter example through the CLI with lossless JSON output', async () => {

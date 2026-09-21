@@ -136,25 +136,82 @@ selectionContract(new SingSelectionLanguage(), {
   ambiguous: 'PING @Both roles SAYING "Hello"',
 });
 
-it('allows Lua loops and functions but terminates runaway scripts and stays usable', async () => {
+describe('host validation of adapter results', () => {
+  // The host repeats what runtime.lua and Sing already check, so a future adapter cannot widen
+  // the audience by returning something the language would have refused.
+  it.each([
+    ['not an object', null, 'Return a ping'],
+    ['a string instead of a plan', 'ping everyone', 'Return a ping'],
+    ['no message', { recipients: ['101'] }, 'message must contain'],
+    ['a blank message', { recipients: ['101'], message: '  \n ' }, 'message must contain'],
+    [
+      'an overlong message',
+      { recipients: ['101'], message: 'x'.repeat(limits.messageLength + 1) },
+      'message must contain',
+    ],
+    ['recipients that are not an array', { recipients: '101', message: 'hi' }, 'array of at most'],
+    [
+      'more recipients than the limit',
+      { recipients: Array.from({ length: limits.recipients + 1 }, () => '101'), message: 'hi' },
+      `array of at most ${limits.recipients}`,
+    ],
+    ['a non-string recipient', { recipients: [101], message: 'hi' }, 'Unknown or ineligible'],
+    ['an ID nobody in the channel has', { recipients: ['999'], message: 'hi' }, '999'],
+    ['an object posing as an ID', { recipients: [{ id: '101' }], message: 'hi' }, 'ineligible'],
+  ])('rejects a plan with %s', (_case, plan, message) => {
+    expect(() => validatePlan(plan, context)).toThrow(message);
+  });
+
+  it('delivers to a repeated recipient once', () => {
+    const plan = validatePlan({ recipients: ['101', '101', '102'], message: 'hi' }, context);
+    expect(plan.recipients).toEqual(['101', '102']);
+  });
+
+  it('accepts a plan at the message and recipient limits', () => {
+    const message = 'x'.repeat(limits.messageLength);
+    expect(validatePlan({ recipients: ['101'], message }, context)).toEqual({
+      recipients: ['101'],
+      message,
+    });
+  });
+});
+
+it('runs Lua loops and functions over the member snapshot', async () => {
   const source =
     'local ids = {}; for _, m in ipairs(members) do if m.id == caller_id then ids[#ids+1] = m.id end end; return { recipients = ids, message = "hi" }';
   expect(validatePlan(await lua.compile(source, context), context).recipients).toEqual(['101']);
-  await expect(lua.compile('while true do end', context)).rejects.toThrow('execution limit');
-  expect((await lua.compile(source, context)).message).toBe('hi');
 });
 
-it('does not expose host access, and rejects malformed or memory-exhausting scripts', async () => {
+it('terminates a runaway Lua script and stays usable afterwards', async () => {
+  await expect(lua.compile('while true do end', context)).rejects.toThrow('execution limit');
+  const plan = await lua.compile('return { recipients = {}, message = "hi" }', context);
+  expect(plan.message).toBe('hi');
+});
+
+it.each([
+  ['the environment', 'os.getenv("DISCORD_TOKEN")'],
+  ['the filesystem', 'io.open("/etc/passwd")'],
+  ['module loading', 'require("fs")'],
+  ['loading more code', 'load("return 1")'],
+  ['the debug library', 'debug.getinfo(1)'],
+  ['the package table', 'package.path'],
+])('denies untrusted Lua access to %s', async (_case, expression) => {
   await expect(
-    lua.compile('return {recipients={}, message=tostring(os.getenv("DISCORD_TOKEN"))}', context),
+    lua.compile(`return {recipients={}, message=tostring(${expression})}`, context),
   ).rejects.toThrow();
+});
+
+it('stops a Lua script that tries to exhaust memory', async () => {
+  await expect(
+    lua.compile('return {recipients={}, message=string.rep("x", 32 * 1024 * 1024)}', context),
+  ).rejects.toThrow();
+});
+
+it('reports a Lua syntax error by line, and explains an unquoted name', async () => {
   await expect(lua.compile('return {', context)).rejects.toThrow(/^Line 1:/);
   await expect(lua.compile('return { recipients = @raphe22 }', context)).rejects.toThrow(
     'Put names in quotes',
   );
-  await expect(
-    lua.compile('return {recipients={}, message=string.rep("x", 32 * 1024 * 1024)}', context),
-  ).rejects.toThrow();
 });
 
 it('enforces the shared limits inside Lua, not just at the host boundary', async () => {
@@ -191,27 +248,32 @@ it('requires Mention Everyone for a full audience regardless of how IDs were sel
   expect(permissionProblem({ ...all, recipients: ['102'] }, context, false)).toBeUndefined();
 });
 
-it('delivers only selected user mentions within Discord limits, with no automatic repeat after failure', async () => {
-  const plan = {
-    recipients: Array.from({ length: 240 }, (_, i) => String(100000000000000000n + BigInt(i))),
-    message: '@everyone <@&123> ' + 'x'.repeat(1400),
-  };
-  const sent = batches(plan);
-  expect(sent.flatMap(batch => batch.allowedMentions.users)).toEqual(plan.recipients);
+const crowd = {
+  recipients: Array.from({ length: 240 }, (_, i) => String(100000000000000000n + BigInt(i))),
+  message: '@everyone <@&123> ' + 'x'.repeat(1400),
+};
+
+it('mentions only the selected users, within Discord’s message and mention limits', () => {
+  const sent = batches(crowd);
+  expect(sent.flatMap(batch => batch.allowedMentions.users)).toEqual(crowd.recipients);
   for (const batch of sent) {
     expect(batch.content.length).toBeLessThanOrEqual(2000);
     expect(batch.allowedMentions.users.length).toBeLessThanOrEqual(100);
+    // Neither the literal @everyone in the message nor a role mention may resolve.
     expect(batch.allowedMentions.parse).toEqual([]);
     for (const id of batch.allowedMentions.users) expect(batch.content).toContain(`<@${id}>`);
   }
+});
+
+it('stops delivery after a failure and reports only confirmed messages', async () => {
   let calls = 0;
-  const result = await deliver(plan, async () => {
+  const result = await deliver(crowd, async () => {
     if (++calls === 2) throw new Error('Discord unavailable');
   });
   expect(calls).toBe(2);
   expect(result).toEqual({
     complete: false,
     sentMessages: 1,
-    sentRecipients: sent[0]!.allowedMentions.users.length,
+    sentRecipients: batches(crowd)[0]!.allowedMentions.users.length,
   });
 });

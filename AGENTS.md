@@ -5,6 +5,8 @@ then sends it. Read `README.md` for the user-facing semantics; this file is abou
 
 ## The one non-obvious thing
 
+When adding or revising tests, use the [writing-tests skill](.agents/skills/writing-tests/SKILL.md).
+
 **Tests import from `dist/`, not `src/`.** The Lua adapter resolves `worker.js` and `runtime.lua`
 relative to its own compiled location, so it only works from built output. `vitest.config.ts` runs
 the build in `globalSetup`, so `pnpm test` and a bare `vitest` are both safe — but if you add a
